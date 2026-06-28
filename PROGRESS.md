@@ -27,7 +27,14 @@ concrete slices needed to call it done.
     hop), outbox-staged `payment.authorized`/`.captured`/`.voided` events,
     observability interceptor on every gRPC handler; boots as a standalone gRPC
     microservice and verified end to end with a real client
-  - ☐ `coordinator`, `supplier`, `ledger`, `notifier`, `reconciler`
+  - ☑ `supplier` — gRPC `Confirm`/`Cancel` over NestJS microservices, the
+    partner source of truth wrapping a **simulated external partner**
+    (deliberately slow + flaky: controllable latency + reject/failure injection,
+    each call a CLIENT span — the partner boundary hop), outbox-staged
+    `supplier.confirmed`/`.cancelled` events, observability interceptor on every
+    gRPC handler; boots as a standalone gRPC microservice and verified end to end
+    with a real client
+  - ☐ `coordinator`, `ledger`, `notifier`, `reconciler`
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
@@ -40,21 +47,24 @@ concrete slices needed to call it done.
 ### M1 — Happy-path saga ◐
 
 - ◐ gRPC contracts for the synchronous commands — `inventory.proto`
-  (`Hold`/`Release`) and `payments.proto` (`Authorize`/`Capture`/`Void`) defined
-  and served; the supplier/ledger/notifier contracts upcoming
+  (`Hold`/`Release`), `payments.proto` (`Authorize`/`Capture`/`Void`), and
+  `supplier.proto` (`Confirm`/`Cancel`) defined and served; the ledger/notifier
+  contracts upcoming
 - ☐ Coordinator drives `hold → authorize → confirm → capture/commit → notify`
 - ◐ Per-service state — inventory owns holds and per-SKU availability; payments
-  owns authorizations and captures, wrapping a simulated PSP (in-memory reference
-  stores; the Postgres-backed stores land with the datastore milestone)
+  owns authorizations and captures, wrapping a simulated PSP; supplier owns
+  partner confirmations, wrapping a simulated external partner (in-memory
+  reference stores; the Postgres-backed stores land with the datastore milestone)
 
 ### M2 — Outbox ◐
 
 - ◐ Transactional outbox table + relay per service — reusable `libs/outbox`
   (record staging, store contract, trace-aware relay) is built and unit-tested;
-  the inventory service stages `inventory.held`/`inventory.released` and the
-  payments service stages `payment.authorized`/`.captured`/`.voided` events
-  through an `OutboxStore` alongside their state changes; the Postgres-backed
-  `OutboxStore` and per-service relay wiring (broker) land next
+  the inventory service stages `inventory.held`/`inventory.released`, the
+  payments service stages `payment.authorized`/`.captured`/`.voided`, and the
+  supplier service stages `supplier.confirmed`/`.cancelled` events through an
+  `OutboxStore` alongside their state changes; the Postgres-backed `OutboxStore`
+  and per-service relay wiring (broker) land next
 - ☐ Crash test: no lost and no phantom events
 
 ### M3 — Trace propagation ☐
@@ -88,9 +98,10 @@ concrete slices needed to call it done.
 ### M8 — Harden + ship ☐
 
 - ◐ External-boundary latency/failure injection — the payments `SimulatedPsp`
-  already injects controllable latency and decline/failure on the PSP hop (an
-  errored CLIENT span when it fails); the supplier simulator applies the same
-  pattern to the partner boundary, upcoming
+  injects controllable latency and decline/failure on the PSP hop, and the
+  supplier `SimulatedSupplierPartner` applies the same pattern to the partner
+  boundary (deliberately slower and flakier defaults), each an errored CLIENT
+  span when it fails; the per-step SLOs and chaos wiring land later
 - ☐ README trace screenshot including a compensation
 - ☐ Release
 

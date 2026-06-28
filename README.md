@@ -17,15 +17,17 @@ current status.
 
 ## Status
 
-Foundations plus the first two saga participants (milestones **M0 → M1**). The
+Foundations plus the first three saga participants (milestones **M0 → M1**). The
 monorepo, tooling, CI, the trace-context propagation library, the OpenTelemetry
 bootstrap library, the trace-correlated logging library, the observability
 interceptor (business spans + RED metrics), the transactional outbox library
 (durable staging + trace-aware relay), the idempotent inbox library (dedup +
 trace-continuing consumer), a gateway health endpoint, the **inventory
-service** — a gRPC source of truth for holds — and the **payments service** — a
-gRPC source of truth for authorizations/captures wrapping a simulated PSP — are
-in place and verified, both staging outbox events. The remaining services, the
+service** — a gRPC source of truth for holds — the **payments service** — a
+gRPC source of truth for authorizations/captures wrapping a simulated PSP — and
+the **supplier service** — a gRPC source of truth for partner confirmations
+wrapping a simulated, deliberately slow-and-flaky external partner — are in place
+and verified, all three staging outbox events. The remaining services, the
 broker/Postgres/observability stack, and the coordinating saga are upcoming
 milestones.
 
@@ -43,7 +45,8 @@ signalman/
     gateway/        # HTTP entry point; opens a booking's root span (M0: health probe)
     inventory/      # gRPC source of truth for holds (Hold/Release) + outbox-staged events
     payments/       # gRPC source of truth for payments (Authorize/Capture/Void), wraps a simulated PSP
-    …               # coordinator, supplier, ledger, notifier, reconciler (upcoming)
+    supplier/       # gRPC source of truth for partner confirmations (Confirm/Cancel), wraps a simulated partner
+    …               # coordinator, ledger, notifier, reconciler (upcoming)
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
@@ -260,6 +263,34 @@ with inventory, the in-memory payment and outbox stores are reference
 implementations; the Postgres-backed stores and the broker relay land with later
 milestones.
 
+### `services/supplier`
+
+The partner leg of the saga — the supplier **source of truth**. It owns partner
+confirmations, and exposes the saga's synchronous supplier commands over gRPC
+(`proto/supplier.proto`):
+
+- `Confirm(bookingId, sku, qty)` books the reservation with the external partner.
+  It is **idempotent per booking**: a retried confirmation returns the standing
+  one rather than confirming twice.
+- `Cancel(bookingId)` releases the confirmation — the saga **compensation**.
+  Idempotent: cancelling an already-cancelled or unknown booking is a successful
+  no-op, so a compensation can fire more than once.
+
+Behind the service sits a **simulated external partner**, the source of truth the
+spec calls out as *deliberately slow and flaky* — where divergence is born.
+`SimulatedSupplierPartner` injects controllable latency and reject/failure
+(`SUPPLIER_LATENCY_MS`, `SUPPLIER_REJECT_RATE`, `SUPPLIER_FAILURE_RATE`, with
+slower/flakier defaults than the PSP), and wraps every call in a **CLIENT span** —
+the partner boundary hop made visible in the booking trace. As with payments, the
+service draws a sharp line between a partner **rejection** (a business "no",
+returned as data with a reason) and a partner **outage** (a thrown error,
+propagated so the gRPC SERVER span errors and the coordinator can retry the hop).
+
+Each state change is paired with an outbox event (`supplier.confirmed` /
+`supplier.cancelled`) staged through `@signalman/outbox`. The in-memory
+confirmation and outbox stores are reference implementations; the Postgres-backed
+stores and the broker relay land with later milestones.
+
 ## Getting started
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
@@ -302,6 +333,18 @@ It registers the `signalman.payments.v1.Payments` service. The simulated PSP's
 behaviour is tunable via `PSP_LATENCY_MS`, `PSP_DECLINE_RATE`, and
 `PSP_FAILURE_RATE` — set them all to `0` for a deterministic, always-approving
 demo.
+
+### Run the supplier service
+
+```bash
+npm run start:supplier          # boots the gRPC server on SUPPLIER_GRPC_URL
+                                # (default 0.0.0.0:50053)
+```
+
+It registers the `signalman.supplier.v1.Supplier` service. The simulated
+partner's behaviour is tunable via `SUPPLIER_LATENCY_MS`, `SUPPLIER_REJECT_RATE`,
+and `SUPPLIER_FAILURE_RATE` — set them all to `0` for a deterministic,
+always-confirming demo.
 
 ## Development
 

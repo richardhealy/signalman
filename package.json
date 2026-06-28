@@ -8,11 +8,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "nest build otel && nest build propagation && nest build logging && nest build interceptor && nest build outbox && nest build inbox && nest build gateway && nest build inventory && nest build payments",
+    "build": "nest build otel && nest build propagation && nest build logging && nest build interceptor && nest build outbox && nest build inbox && nest build gateway && nest build inventory && nest build payments && nest build supplier",
     "start": "nest start gateway",
     "start:dev": "nest start gateway --watch",
     "start:inventory": "nest start inventory",
     "start:payments": "nest start payments",
+    "start:supplier": "nest start supplier",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",

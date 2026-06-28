@@ -7,6 +7,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `services/supplier`: the third saga participant — the partner source of truth,
+  the confirmation leg of the booking saga. A NestJS gRPC microservice serves the
+  `Supplier` contract (`Confirm`/`Cancel`, `proto/supplier.proto`) and owns
+  partner confirmations. `Confirm` is idempotent per booking (a retry returns the
+  standing confirmation; a partner rejection is reported as data with a reason),
+  and `Cancel` — the saga compensation — is an idempotent no-op once already
+  cancelled or absent. Behind it sits a **simulated external partner**
+  (`SimulatedSupplierPartner`) — the source of truth the spec calls *deliberately
+  slow and flaky*, where divergence is born — with controllable latency and
+  reject/failure injection (`SUPPLIER_LATENCY_MS`, `SUPPLIER_REJECT_RATE`,
+  `SUPPLIER_FAILURE_RATE`, defaulting slower/flakier than the PSP); every partner
+  call is a CLIENT span (the external boundary hop), and the service distinguishes
+  a rejection (returned data) from a partner outage (a thrown error that errors
+  the gRPC span so the hop is observable). Each state change stages a
+  `supplier.confirmed`/`.cancelled` event through `@signalman/outbox`, and every
+  gRPC handler is wrapped in `@signalman/interceptor`'s SERVER span. In-memory
+  confirmation and outbox stores stand in until the Postgres-backed stores land;
+  the service boots as a standalone gRPC microservice with telemetry started
+  first, verified end to end with a real gRPC client.
+
+### Added — 2026-06-28
 - `services/payments`: the second saga participant — the payments source of
   truth, the money leg of the booking saga. A NestJS gRPC microservice serves
   the `Payments` contract (`Authorize`/`Capture`/`Void`, `proto/payments.proto`)
