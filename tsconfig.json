@@ -29,7 +29,9 @@
       "@signalman/interceptor": ["libs/interceptor/src"],
       "@signalman/interceptor/*": ["libs/interceptor/src/*"],
       "@signalman/outbox": ["libs/outbox/src"],
-      "@signalman/outbox/*": ["libs/outbox/src/*"]
+      "@signalman/outbox/*": ["libs/outbox/src/*"],
+      "@signalman/inbox": ["libs/inbox/src"],
+      "@signalman/inbox/*": ["libs/inbox/src/*"]
     }
   }
 }

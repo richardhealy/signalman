@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `libs/inbox`: idempotent inbox — the dedup half of effectively-once delivery.
+  `InboxStore.processOnce` is the atomic dedup primitive: it records a per-consumer
+  marker in the **same transaction** as the handler's side effects, so a first
+  delivery runs the handler and commits both together while a redelivery is
+  skipped without re-running it. `InMemoryInboxStore` is the reference
+  implementation — it claims synchronously (interleaved redeliveries cannot both
+  run) and rolls the marker back when the handler throws, modelling
+  `INSERT … ON CONFLICT DO NOTHING` plus the handler under one transaction.
+  `IdempotentConsumer` wraps a broker handler: it extracts the upstream trace
+  context and opens a CONSUMER span continuing the publish trace (so the consume
+  span joins the same booking trace), skips redeliveries (tagged
+  `signalman.inbox.duplicate` on the span rather than dropped silently), and
+  records then rethrows handler errors so the caller can NACK. Dedup is namespaced
+  per consumer so fan-out consumers each process a message once. Pairs with
+  `libs/outbox` for effectively-once processing.
+
+### Added — 2026-06-28
 - `libs/outbox`: transactional outbox. `createOutboxRecord` stages an event into
   a durable record, capturing the active trace context into its headers, so a
   service can write its state and its outbox row in one local transaction and

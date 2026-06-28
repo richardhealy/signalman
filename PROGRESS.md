@@ -20,8 +20,9 @@ concrete slices needed to call it done.
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
-- ◐ Remaining libs scaffolded: `outbox` ☑, `inbox` ☐
+- ☑ Remaining libs scaffolded: `outbox` ☑, `inbox` ☑
   - ☑ `libs/outbox` — transactional outbox: durable record + trace capture (`createOutboxRecord`), `OutboxStore` contract, `InMemoryOutboxStore` reference (leasing, back-off, dead-letter), and a `OutboxRelay` that publishes each row under a PRODUCER span parented to the staged trace (at-least-once, capped exponential back-off, dead-lettering)
+  - ☑ `libs/inbox` — idempotent consumer: `InboxStore.processOnce` dedup contract (marker committed atomically with the handler's side effects), `InMemoryInboxStore` reference (synchronous claim, rollback-on-failure), and an `IdempotentConsumer` that opens a CONSUMER span continuing the message's trace, skips redeliveries (tagged on the span), and rethrows handler errors for NACK — the dedup core that pairs with the outbox for effectively-once
 - ☐ Postgres per service, broker (NATS JetStream/Kafka), OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
@@ -50,9 +51,12 @@ concrete slices needed to call it done.
 - ☐ Failure paths unwind in reverse (release hold, void authorization)
 - ☐ Compensations visible as spans
 
-### M5 — Idempotency ☐
+### M5 — Idempotency ◐
 
-- ☐ Inbox dedup; redelivery-safe consumers
+- ◐ Inbox dedup; redelivery-safe consumers — reusable `libs/inbox`
+  (`processOnce` dedup contract, in-memory reference store, trace-aware
+  `IdempotentConsumer`) is built and unit-tested; the Postgres-backed
+  `InboxStore` and per-consumer wiring land with the services
 
 ### M6 — Reconciler ☐
 

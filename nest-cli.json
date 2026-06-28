@@ -63,6 +63,15 @@
       "compilerOptions": {
         "tsConfigPath": "libs/outbox/tsconfig.lib.json"
       }
+    },
+    "inbox": {
+      "type": "library",
+      "root": "libs/inbox",
+      "entryFile": "index",
+      "sourceRoot": "libs/inbox/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/inbox/tsconfig.lib.json"
+      }
     }
   }
 }

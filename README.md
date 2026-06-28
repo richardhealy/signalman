@@ -20,8 +20,9 @@ current status.
 Early scaffold (milestone **M0**). The monorepo, tooling, CI, the trace-context
 propagation library, the OpenTelemetry bootstrap library, the trace-correlated
 logging library, the observability interceptor (business spans + RED metrics),
-the transactional outbox library (durable staging + trace-aware relay), and a
-gateway health endpoint are in place and verified. The remaining services, the
+the transactional outbox library (durable staging + trace-aware relay), the
+idempotent inbox library (dedup + trace-continuing consumer), and a gateway
+health endpoint are in place and verified. The remaining services, the
 broker/Postgres/observability stack, and the saga itself are upcoming milestones.
 
 ## Stack
@@ -43,12 +44,12 @@ signalman/
     logging/        # trace-correlated structured JSON logger (NestJS LoggerService)
     interceptor/    # NestJS interceptor: per-handler business spans + RED metrics
     outbox/         # transactional outbox: durable event staging + trace-aware relay
-    …               # inbox (upcoming)
+    inbox/          # idempotent inbox: per-consumer dedup + trace-continuing consumer
 ```
 
 The monorepo uses NestJS monorepo mode. Libraries are imported via path aliases
 (e.g. `@signalman/otel`, `@signalman/propagation`, `@signalman/logging`,
-`@signalman/interceptor`, `@signalman/outbox`).
+`@signalman/interceptor`, `@signalman/outbox`, `@signalman/inbox`).
 
 ### `@signalman/otel`
 
@@ -155,6 +156,50 @@ relay.start(250); // poll every 250ms; relay.stop() on shutdown
 `InMemoryOutboxStore` is the reference store implementation — it models leasing,
 back-off, and dead-lettering exactly as a SQL store would, and serves as a fake
 in tests until the Postgres-backed store lands with the services.
+
+### `@signalman/inbox`
+
+The outbox publishes **at-least-once** — a relay crash between handing a message
+to the broker and marking it published leaves the row claimable, so the broker
+may redeliver. The inbox is the other half of **effectively-once**: each consumer
+records the ids of the messages it has handled and skips a redelivery it has seen
+before. Recording that marker *in the same transaction* as the handler's side
+effects is what makes the guarantee real — the work and the "I did this" commit
+together, so a crash before commit rolls back both and the redelivery reprocesses
+cleanly.
+
+`IdempotentConsumer` wraps a handler: it extracts the upstream trace context from
+the broker headers and opens a CONSUMER span **continuing the publish trace** (so
+the consume span joins the same booking trace instead of orphaning), then dedups
+through an `InboxStore`. A first delivery runs the handler under that active span;
+a redelivery is skipped and tagged on the span so the duplicate is visible, not
+silent; a handler error is recorded and rethrown so the caller can NACK and let
+the broker redeliver:
+
+```ts
+import { IdempotentConsumer, InMemoryInboxStore } from '@signalman/inbox';
+
+const ledger = new IdempotentConsumer({
+  store: new InMemoryInboxStore(),
+  consumer: 'ledger', // dedup namespace: fan-out consumers each use their own
+  messagingSystem: 'nats',
+});
+
+// In the broker subscription, hand each delivered message to the consumer:
+const { status } = await ledger.consume(
+  { messageId: record.id, eventType: 'supplier.confirmed', headers },
+  async () => commitLedgerEntry(record.payload), // runs at most once
+);
+// status === 'processed' on the first delivery, 'duplicate' on a redelivery
+```
+
+`InboxStore.processOnce` is the single atomic primitive — dedup-check, run, and
+record in one transaction — because that is the only place the guarantee can be
+made. `InMemoryInboxStore` is the reference store: it claims synchronously (so
+interleaved redeliveries can't both run) and rolls the marker back when the
+handler throws, modelling an `INSERT … ON CONFLICT DO NOTHING` plus the handler's
+writes under one transaction, until the Postgres-backed store lands with the
+services. Pair it with the outbox relay for effectively-once processing.
 
 ## Getting started
 
