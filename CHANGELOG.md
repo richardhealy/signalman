@@ -7,6 +7,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- `libs/broker`: the broker boundary that **closes the async-event hop** — the
+  transport between the transactional outbox and the idempotent inbox, and the
+  async half of the headline "one booking = one trace" (M3). `MessageBroker` is
+  the transport-agnostic surface (`publish` a message on its subject, `subscribe`
+  a handler to subject patterns), so the rest of the system depends on "a broker"
+  rather than on NATS or Kafka. `InMemoryBroker` is the reference implementation,
+  modelling the semantics a real broker gives the system: **subject matching**
+  with NATS wildcards (`subjectMatches` — `*` for one token, `>` for the tail),
+  **fan-out** so every matching subscription gets its own copy (with **queue
+  groups** to load-balance a subject across members instead), and
+  **at-least-once delivery** — a handler that throws (NACK) is redelivered up to
+  `maxDeliver` attempts, then dead-lettered. Delivery is async and decoupled from
+  publish; `drain()` awaits quiescence for deterministic tests and graceful
+  shutdown. Two thin adapters wire it to the libraries either side:
+  `BrokerPublisher` implements the outbox relay's `Publisher` over a broker
+  (`toBrokerMessage` maps a record's `eventType` to the subject and preserves the
+  trace-carrying headers), and `toConsumedMessage` turns a delivered
+  `BrokerMessage` into the inbox's `ConsumedMessage` — so a service composes
+  outbox → relay → broker → inbox in one subscription, turning at-least-once
+  delivery plus inbox dedup into effectively-once processing. A cross-library
+  integration test (`trace-continuity.spec.ts`) wires the whole hop end to end
+  and asserts the saga-step span, the relay's **PRODUCER** publish span, and the
+  inbox's **CONSUMER** consume span share **one connected trace** with correct
+  lineage (publish parented to the step, consume parented to publish), and that
+  the hop is redelivery-safe (a duplicate is processed once; a NACK is
+  redelivered and reprocessed). The NATS-backed transport swaps in behind the
+  same `MessageBroker` boundary with the docker stack.
 - Trace propagation across the synchronous gRPC hops (M3, the headline's
   synchronous half): a booking now stays **one connected trace** as the
   coordinator drives the legs over gRPC. The coordinator's leg clients open a

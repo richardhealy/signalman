@@ -31,7 +31,9 @@
       "@signalman/outbox": ["libs/outbox/src"],
       "@signalman/outbox/*": ["libs/outbox/src/*"],
       "@signalman/inbox": ["libs/inbox/src"],
-      "@signalman/inbox/*": ["libs/inbox/src/*"]
+      "@signalman/inbox/*": ["libs/inbox/src/*"],
+      "@signalman/broker": ["libs/broker/src"],
+      "@signalman/broker/*": ["libs/broker/src/*"]
     }
   }
 }

@@ -16,5 +16,6 @@ module.exports = {
     '^@signalman/interceptor(|/.*)$': '<rootDir>/libs/interceptor/src/$1',
     '^@signalman/outbox(|/.*)$': '<rootDir>/libs/outbox/src/$1',
     '^@signalman/inbox(|/.*)$': '<rootDir>/libs/inbox/src/$1',
+    '^@signalman/broker(|/.*)$': '<rootDir>/libs/broker/src/$1',
   },
 };

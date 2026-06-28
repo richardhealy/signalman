@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "nest build otel && nest build propagation && nest build logging && nest build interceptor && nest build outbox && nest build inbox && nest build gateway && nest build coordinator && nest build inventory && nest build payments && nest build supplier && nest build ledger && nest build notifier && nest build reconciler",
+    "build": "nest build otel && nest build propagation && nest build logging && nest build interceptor && nest build outbox && nest build inbox && nest build broker && nest build gateway && nest build coordinator && nest build inventory && nest build payments && nest build supplier && nest build ledger && nest build notifier && nest build reconciler",
     "start": "nest start gateway",
     "start:dev": "nest start gateway --watch",
     "start:coordinator": "nest start coordinator",

@@ -84,10 +84,23 @@ concrete slices needed to call it done.
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
-- ☑ Remaining libs scaffolded: `outbox` ☑, `inbox` ☑
+- ☑ Remaining libs scaffolded: `outbox` ☑, `inbox` ☑, `broker` ☑
   - ☑ `libs/outbox` — transactional outbox: durable record + trace capture (`createOutboxRecord`), `OutboxStore` contract, `InMemoryOutboxStore` reference (leasing, back-off, dead-letter), and a `OutboxRelay` that publishes each row under a PRODUCER span parented to the staged trace (at-least-once, capped exponential back-off, dead-lettering)
   - ☑ `libs/inbox` — idempotent consumer: `InboxStore.processOnce` dedup contract (marker committed atomically with the handler's side effects), `InMemoryInboxStore` reference (synchronous claim, rollback-on-failure), and an `IdempotentConsumer` that opens a CONSUMER span continuing the message's trace, skips redeliveries (tagged on the span), and rethrows handler errors for NACK — the dedup core that pairs with the outbox for effectively-once
-- ☐ Postgres per service, broker (NATS JetStream/Kafka), OTel Collector
+  - ☑ `libs/broker` — the broker boundary that closes the async-event hop: a
+    transport-agnostic `MessageBroker` (publish + subject-pattern subscribe, NATS
+    wildcards via `subjectMatches`), an `InMemoryBroker` reference (fan-out,
+    queue-group load-balancing, at-least-once redelivery on NACK with
+    dead-lettering, async delivery awaitable via `drain`), the `BrokerPublisher`
+    adapter implementing the outbox relay's `Publisher` over the broker
+    (`toBrokerMessage`), and the `toConsumedMessage` bridge onto the inbox
+    `IdempotentConsumer`. A cross-library integration test wires
+    outbox → relay → broker → inbox and asserts the three hops form one connected
+    trace; the NATS-backed adapter swaps in behind the same boundary with the
+    docker stack
+- ☐ Postgres per service, broker **transport** (NATS JetStream/Kafka adapter
+  behind `libs/broker`'s `MessageBroker`; the boundary + in-memory reference are
+  built), OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
 ### M1 — Happy-path saga ◐
@@ -116,25 +129,37 @@ concrete slices needed to call it done.
   payments service stages `payment.authorized`/`.captured`/`.voided`, the
   supplier service stages `supplier.confirmed`/`.cancelled`, and the ledger
   service stages `ledger.committed`/`.reversed` events through an `OutboxStore`
-  alongside their state changes; the Postgres-backed `OutboxStore` and
-  per-service relay wiring (broker) land next
+  alongside their state changes. The relay's `Publisher` now has a concrete
+  implementation: `@signalman/broker`'s `BrokerPublisher` over the
+  `MessageBroker` boundary (with an `InMemoryBroker` reference), so the relay
+  publishes onto an actual broker in-process. The Postgres-backed `OutboxStore`,
+  the NATS-backed broker adapter, and per-service relay wiring land next
 - ☐ Crash test: no lost and no phantom events
 
 ### M3 — Trace propagation ◐
 
 - ◐ One booking = one connected trace across gRPC, async events, external hop —
-  the **synchronous gRPC half is wired**. The coordinator's leg clients open a
-  CLIENT span per RPC and inject the W3C `traceparent` into the request metadata
-  (`callWithTrace` / `injectTraceMetadata` in `services/coordinator/src/grpc`),
-  and `@signalman/interceptor` extracts that context on the SERVER side
+  **both the synchronous gRPC half and the async-event hop are now wired**. On
+  the sync side, the coordinator's leg clients open a CLIENT span per RPC and
+  inject the W3C `traceparent` into the request metadata (`callWithTrace` /
+  `injectTraceMetadata` in `services/coordinator/src/grpc`), and
+  `@signalman/interceptor` extracts that context on the SERVER side
   (`resolveParentContext`) so each leg handler span **continues** the booking
-  trace instead of starting an orphan. Round-tripped end to end in unit tests
-  (client inject → server extract → same `traceId`, the CLIENT span as the
-  remote parent). The async-event hop (outbox PRODUCER → broker → inbox
-  CONSUMER) and the in-leg external supplier/PSP CLIENT hops are already
-  span-shaped; folding them onto the same wire trace lands with the broker
-  milestone
-- ☐ Span links for fan-out (one event, many consumers)
+  trace. On the async side, `@signalman/broker` closes the loop: the outbox
+  relay publishes each row through `BrokerPublisher` onto the `MessageBroker`
+  under a PRODUCER span continuing the staged trace, a subscriber bridges each
+  delivery to the inbox `IdempotentConsumer` (`toConsumedMessage`), and its
+  CONSUMER span continues that trace. An end-to-end integration test
+  (`libs/broker/src/trace-continuity.spec.ts`) asserts the saga step → publish
+  (PRODUCER) → consume (CONSUMER) spans share one `traceId` with the right
+  lineage (publish parented to the step, consume parented to publish) — the
+  async half of the headline, proven over the in-memory broker. The NATS-backed
+  transport swaps in behind the same boundary with the docker stack; the
+  external supplier/PSP CLIENT hops are already span-shaped within their legs
+- ◐ Span links for fan-out (one event, many consumers) — the broker delivers
+  fan-out (every matching subscription gets a copy; queue groups load-balance),
+  so the substrate exists; emitting `span links` on the fan-out consume spans
+  is still to do
 - ◐ Spans align to OTel RPC + messaging semantic conventions — both sides of the
   gRPC hop now carry `rpc.system`/`rpc.service`/`rpc.method` (CLIENT and SERVER);
   the messaging-semconv check lands with the broker
@@ -158,9 +183,13 @@ concrete slices needed to call it done.
   (`processOnce` dedup contract, in-memory reference store, trace-aware
   `IdempotentConsumer`) is built and unit-tested, and has its first real consumer:
   the `notifier` wires an `IdempotentConsumer` (namespace `notifier`) around its
-  `ledger.committed` handler, redelivery-safe and trace-continuing. The
-  Postgres-backed `InboxStore` and the remaining consumers land with the services
-  and broker
+  `ledger.committed` handler, redelivery-safe and trace-continuing. The dedup is
+  now exercised over the **actual broker boundary** — the `libs/broker`
+  integration test drives a duplicate delivery (→ processed once, second tagged a
+  duplicate) and a NACK (handler throws → broker redelivers → reprocessed) through
+  the consumer, proving effectively-once over at-least-once delivery rather than
+  in isolation. The Postgres-backed `InboxStore` and the remaining services'
+  subscriptions land with the services and the broker transport
 
 ### M6 — Reconciler ◐
 

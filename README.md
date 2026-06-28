@@ -36,12 +36,18 @@ the **notifier service** — the async tail that consumes the booking's terminal
 idempotently via the inbox — and the **reconciler service** — the periodic
 backstop that compares the sources of truth, flags any divergence, and links each
 finding back to the originating booking trace — are all in place and verified.
-Cross-service **trace propagation over gRPC** is now wired too (M3, the
-synchronous half): the coordinator opens a CLIENT span per leg call and injects
-the W3C `traceparent` into the request metadata, and the observability
-interceptor extracts it so each leg's SERVER span continues the same booking
-trace instead of orphaning. The broker/Postgres/observability stack — and with it
-the async-event hop of the one-trace story — are the upcoming milestones.
+Cross-service **trace propagation** is now wired on **both halves** of the
+one-trace story (M3). Synchronous: the coordinator opens a CLIENT span per leg
+call and injects the W3C `traceparent` into the request metadata, and the
+observability interceptor extracts it so each leg's SERVER span continues the
+same booking trace instead of orphaning. Asynchronous: the new
+**`@signalman/broker`** library — the `MessageBroker` boundary plus an in-memory
+reference — closes the outbox → broker → inbox hop, with an end-to-end test
+proving the saga step, the relay's PRODUCER publish span, and the inbox's
+CONSUMER consume span share one connected trace. The NATS-backed broker
+transport, Postgres per service, and the OTel Collector/Tempo/Grafana stack —
+which fold these in-process proofs onto real infrastructure — are the upcoming
+milestones.
 
 ## Stack
 
@@ -69,11 +75,13 @@ signalman/
     interceptor/    # NestJS interceptor: per-handler business spans + RED metrics
     outbox/         # transactional outbox: durable event staging + trace-aware relay
     inbox/          # idempotent inbox: per-consumer dedup + trace-continuing consumer
+    broker/         # the broker boundary + in-memory reference: outbox→broker→inbox on one trace
 ```
 
 The monorepo uses NestJS monorepo mode. Libraries are imported via path aliases
 (e.g. `@signalman/otel`, `@signalman/propagation`, `@signalman/logging`,
-`@signalman/interceptor`, `@signalman/outbox`, `@signalman/inbox`).
+`@signalman/interceptor`, `@signalman/outbox`, `@signalman/inbox`,
+`@signalman/broker`).
 
 ### `@signalman/otel`
 
@@ -231,6 +239,55 @@ interleaved redeliveries can't both run) and rolls the marker back when the
 handler throws, modelling an `INSERT … ON CONFLICT DO NOTHING` plus the handler's
 writes under one transaction, until the Postgres-backed store lands with the
 services. Pair it with the outbox relay for effectively-once processing.
+
+### `@signalman/broker`
+
+The broker is the transport between the outbox and the inbox — the async-event
+hop of the one-trace story. `MessageBroker` is the transport-agnostic boundary
+(`publish` a message on its subject, `subscribe` a handler to subject patterns);
+the rest of the system depends on it rather than on NATS or Kafka, so the
+in-memory reference backs the tests and a single-process demo, and a JetStream
+adapter slots in later behind the same interface.
+
+`InMemoryBroker` is that reference. It models the semantics a real broker gives
+the system: **subject matching** with NATS wildcards (`subjectMatches` — `*` for
+one token, `>` for the tail), **fan-out** so every matching subscription gets its
+own copy (with **queue groups** to load-balance a subject across members
+instead), and **at-least-once delivery** — a handler that throws (NACK) is
+redelivered up to `maxDeliver` attempts, then dead-lettered. Delivery is async
+and decoupled from publish; `drain()` awaits quiescence for tests and graceful
+shutdown.
+
+Two thin adapters wire the broker to the libraries either side of it.
+`BrokerPublisher` implements the outbox relay's `Publisher` over a broker
+(`toBrokerMessage` maps a record's `eventType` to the subject and preserves the
+trace-carrying headers), and `toConsumedMessage` turns a delivered
+`BrokerMessage` into the inbox's `ConsumedMessage`. A service composes them in
+one line, so at-least-once delivery and inbox dedup become effectively-once
+processing on the booking trace:
+
+```ts
+import { InMemoryBroker, BrokerPublisher, toConsumedMessage } from '@signalman/broker';
+import { OutboxRelay } from '@signalman/outbox';
+import { IdempotentConsumer, InMemoryInboxStore } from '@signalman/inbox';
+
+const broker = new InMemoryBroker();
+
+// Producer side: the relay drains the outbox onto the broker.
+const relay = new OutboxRelay({ store, publisher: new BrokerPublisher(broker), messagingSystem: 'memory' });
+relay.start(250);
+
+// Consumer side: each delivery flows through the idempotent inbox.
+const consumer = new IdempotentConsumer({ store: new InMemoryInboxStore(), consumer: 'notifier' });
+broker.subscribe('ledger.committed', (message) =>
+  consumer.consume(toConsumedMessage(message), async () => notifyCustomer(message)).then(() => undefined),
+);
+```
+
+Wired this way, a staged event's saga-step span, the relay's PRODUCER publish
+span, and the inbox's CONSUMER consume span all hang off **one connected booking
+trace** — the async half of "one booking = one trace", proven end to end in
+[`libs/broker/src/trace-continuity.spec.ts`](libs/broker/src/trace-continuity.spec.ts).
 
 ### `services/inventory`
 

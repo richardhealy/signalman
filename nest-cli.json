@@ -140,6 +140,15 @@
       "compilerOptions": {
         "tsConfigPath": "libs/inbox/tsconfig.lib.json"
       }
+    },
+    "broker": {
+      "type": "library",
+      "root": "libs/broker",
+      "entryFile": "index",
+      "sourceRoot": "libs/broker/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/broker/tsconfig.lib.json"
+      }
     }
   }
 }
