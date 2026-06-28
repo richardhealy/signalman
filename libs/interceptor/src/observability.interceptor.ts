@@ -24,7 +24,7 @@ import {
 } from '@opentelemetry/api';
 import { ATTR_ERROR_TYPE, ERROR_TYPE_VALUE_OTHER } from '@opentelemetry/semantic-conventions';
 import { Observable } from 'rxjs';
-import { resolveOperation, type ResolvedOperation } from './operation';
+import { resolveOperation, resolveParentContext, type ResolvedOperation } from './operation';
 import { RedMetrics } from './red-metrics';
 
 /** Construction inputs for the {@link ObservabilityInterceptor}. */
@@ -62,12 +62,17 @@ export class ObservabilityInterceptor implements NestInterceptor {
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const operation = resolveOperation(context);
-    const span = this.tracer.startSpan(operation.name, {
-      kind: operation.kind,
-      attributes: operation.attributes,
-    });
+    // For an inbound gRPC call this lifts the caller's trace from the request
+    // metadata, so the SERVER span continues the booking trace instead of
+    // orphaning; for HTTP/other it is just the active context (a root span).
+    const parentContext = resolveParentContext(context);
+    const span = this.tracer.startSpan(
+      operation.name,
+      { kind: operation.kind, attributes: operation.attributes },
+      parentContext,
+    );
     const startedAt = this.now();
-    const activeContext = trace.setSpan(otelContext.active(), span);
+    const activeContext = trace.setSpan(parentContext, span);
 
     // Subscribe *inside* the span's context so the handler — and anything it
     // awaits — runs with this span active. We defer into a fresh Observable

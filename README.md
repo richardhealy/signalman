@@ -36,8 +36,12 @@ the **notifier service** — the async tail that consumes the booking's terminal
 idempotently via the inbox — and the **reconciler service** — the periodic
 backstop that compares the sources of truth, flags any divergence, and links each
 finding back to the originating booking trace — are all in place and verified.
-The broker/Postgres/observability stack and cross-service trace propagation are
-the upcoming milestones.
+Cross-service **trace propagation over gRPC** is now wired too (M3, the
+synchronous half): the coordinator opens a CLIENT span per leg call and injects
+the W3C `traceparent` into the request metadata, and the observability
+interceptor extracts it so each leg's SERVER span continues the same booking
+trace instead of orphaning. The broker/Postgres/observability stack — and with it
+the async-event hop of the one-trace story — are the upcoming milestones.
 
 ## Stack
 
@@ -129,6 +133,13 @@ low-cardinality `operation`/transport/`outcome` dimension set, and maps HTTP and
 gRPC contexts onto the OpenTelemetry RPC/HTTP semantic conventions. Errored spans
 carry `error.type` and a recorded exception. Pass `global: false` to bind it
 selectively with `@UseInterceptors` instead of registering it globally.
+
+For an inbound gRPC call it also lifts the upstream `traceparent` from the
+request metadata (`resolveParentContext`), so the SERVER span **continues** the
+caller's booking trace rather than starting an orphan — the server half of the
+cross-service trace whose client half lives in the coordinator's leg clients.
+Inbound HTTP at the gateway carries no upstream parent, so its span is the
+trace's root.
 
 ### `@signalman/outbox`
 
@@ -357,9 +368,11 @@ flagged so the unwind is legible at a glance. The orchestrator depends only on
 four leg **ports**, so it is unit-tested end to end against in-memory fakes; in
 production those ports are gRPC client adapters dialling the real services
 (`INVENTORY_GRPC_URL`, `PAYMENTS_GRPC_URL`, `SUPPLIER_GRPC_URL`,
-`LEDGER_GRPC_URL`). The cross-service CLIENT spans and `traceparent` propagation
-that fold the legs' own spans into this one trace land with the trace-propagation
-milestone.
+`LEDGER_GRPC_URL`). Those adapters now open a **CLIENT span** per RPC and inject
+the booking's `traceparent` into the request metadata (`callWithTrace` /
+`injectTraceMetadata`), so each leg's SERVER span continues this one trace —
+the cross-service folding the trace-propagation milestone (M3) calls for, on the
+synchronous gRPC hops. The async-event hop joins it once the broker lands.
 
 ### `services/notifier`
 

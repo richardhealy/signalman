@@ -37,6 +37,16 @@ function httpContext(): ExecutionContext {
   } as unknown as ExecutionContext;
 }
 
+/** Build a gRPC ExecutionContext stub whose request metadata is `metadata`. */
+function rpcContext(metadata: { getMap: () => Record<string, string | Buffer> }): ExecutionContext {
+  return {
+    getType: () => 'rpc',
+    getClass: () => ({ name: 'Inventory' }),
+    getHandler: () => ({ name: 'Hold' }),
+    switchToRpc: () => ({ getContext: () => metadata }),
+  } as unknown as ExecutionContext;
+}
+
 function handlerEmitting(value: unknown): CallHandler {
   return { handle: () => of(value) };
 }
@@ -132,6 +142,26 @@ describe('ObservabilityInterceptor', () => {
       (child as unknown as { parentSpanId?: string }).parentSpanId;
     expect(child!.spanContext().traceId).toBe(server!.spanContext().traceId);
     expect(parentId).toBe(server!.spanContext().spanId);
+  });
+
+  it('continues the caller trace carried in gRPC metadata, so the SERVER span is no orphan', async () => {
+    const interceptor = new ObservabilityInterceptor({ tracer, metrics, now: steppingClock(1) });
+    const traceId = '0af7651916cd43dd8448eb211c80319c';
+    const spanId = 'b7ad6b7169203331';
+    const metadata = { getMap: () => ({ traceparent: `00-${traceId}-${spanId}-01` }) };
+
+    await lastValueFrom(interceptor.intercept(rpcContext(metadata), handlerEmitting('ok')));
+
+    const span = finishedSpan();
+    expect(span.name).toBe('Inventory/Hold');
+    expect(span.kind).toBe(SpanKind.SERVER);
+    // Same trace as the caller, parented to the caller's (CLIENT) span.
+    expect(span.spanContext().traceId).toBe(traceId);
+    const parentId =
+      (span as unknown as { parentSpanContext?: { spanId: string }; parentSpanId?: string })
+        .parentSpanContext?.spanId ??
+      (span as unknown as { parentSpanId?: string }).parentSpanId;
+    expect(parentId).toBe(spanId);
   });
 
   it('marks the span errored, records the exception, and counts an error', async () => {

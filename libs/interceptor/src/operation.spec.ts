@@ -1,6 +1,6 @@
-import { SpanKind } from '@opentelemetry/api';
+import { SpanKind, trace } from '@opentelemetry/api';
 import { type ExecutionContext } from '@nestjs/common';
-import { resolveOperation } from './operation';
+import { resolveOperation, resolveParentContext } from './operation';
 
 interface ContextParts {
   type?: 'http' | 'rpc' | 'ws';
@@ -83,5 +83,48 @@ describe('resolveOperation', () => {
     expect(op.kind).toBe(SpanKind.INTERNAL);
     expect(op.name).toBe('Gateway.onEvent');
     expect(op.metricAttributes).toEqual({ operation: 'Gateway.onEvent' });
+  });
+});
+
+describe('resolveParentContext', () => {
+  // A well-formed W3C traceparent (the example from the spec): version-traceid-spanid-flags.
+  const TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+  const SPAN_ID = 'b7ad6b7169203331';
+
+  /** A gRPC ExecutionContext whose request metadata is the given header map. */
+  function rpcContext(map: Record<string, string | Buffer>): ExecutionContext {
+    return {
+      getType: () => 'rpc',
+      getClass: () => ({ name: 'Inventory' }),
+      getHandler: () => ({ name: 'Hold' }),
+      switchToRpc: () => ({ getContext: () => ({ getMap: () => map }) }),
+    } as unknown as ExecutionContext;
+  }
+
+  it('lifts the upstream traceparent from gRPC metadata as the parent span context', () => {
+    const ctx = resolveParentContext(rpcContext({ traceparent: `00-${TRACE_ID}-${SPAN_ID}-01` }));
+
+    const parent = trace.getSpanContext(ctx);
+    expect(parent?.traceId).toBe(TRACE_ID);
+    expect(parent?.spanId).toBe(SPAN_ID);
+    // Marked remote so the SDK knows the parent lives in another process.
+    expect(parent?.isRemote).toBe(true);
+  });
+
+  it('returns the active context (a root) for a gRPC call carrying no traceparent', () => {
+    expect(trace.getSpanContext(resolveParentContext(rpcContext({})))).toBeUndefined();
+  });
+
+  it('returns the active context for a non-RPC (HTTP) handler — the gateway is the trace root', () => {
+    const ctx = resolveParentContext(makeContext({ type: 'http', request: undefined }));
+    expect(trace.getSpanContext(ctx)).toBeUndefined();
+  });
+
+  it('returns the active context when the RPC context exposes no metadata map', () => {
+    const noMetadata = {
+      getType: () => 'rpc',
+      switchToRpc: () => ({ getContext: () => undefined }),
+    } as unknown as ExecutionContext;
+    expect(trace.getSpanContext(resolveParentContext(noMetadata))).toBeUndefined();
   });
 });

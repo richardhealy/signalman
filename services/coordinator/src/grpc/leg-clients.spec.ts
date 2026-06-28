@@ -1,10 +1,29 @@
+import { Metadata } from '@grpc/grpc-js';
+import {
+  SpanKind,
+  SpanStatusCode,
+  context as otelContext,
+  trace,
+  type Tracer,
+} from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+  type ReadableSpan,
+} from '@opentelemetry/sdk-trace-base';
+import { resolveParentContext } from '@signalman/interceptor';
+import { type ExecutionContext } from '@nestjs/common';
 import { INVENTORY_GRPC_PACKAGE, INVENTORY_GRPC_SERVICE, INVENTORY_PROTO_PATH } from '../proto';
 import {
   GrpcInventoryPort,
   GrpcLedgerPort,
   GrpcPaymentsPort,
   GrpcSupplierPort,
+  callWithTrace,
   createUnaryCall,
+  injectTraceMetadata,
   type UnaryCall,
 } from './leg-clients';
 
@@ -96,6 +115,131 @@ describe('gRPC leg ports', () => {
           url: 'localhost:50051',
         }),
       ).toThrow(/not found in proto definition/);
+    });
+  });
+});
+
+describe('gRPC client tracing', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: BasicTracerProvider;
+  let tracer: Tracer;
+  let contextManager: AsyncLocalStorageContextManager;
+
+  beforeEach(() => {
+    contextManager = new AsyncLocalStorageContextManager();
+    contextManager.enable();
+    otelContext.setGlobalContextManager(contextManager);
+
+    exporter = new InMemorySpanExporter();
+    provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    tracer = provider.getTracer('test');
+  });
+
+  afterEach(async () => {
+    contextManager.disable();
+    otelContext.disable();
+    await provider.shutdown();
+  });
+
+  function finishedSpan(): ReadableSpan {
+    const spans = exporter.getFinishedSpans();
+    expect(spans).toHaveLength(1);
+    return spans[0];
+  }
+
+  describe('injectTraceMetadata', () => {
+    it('writes the active span trace context into gRPC metadata', () => {
+      const span = tracer.startSpan('client');
+      const ctx = trace.setSpan(otelContext.active(), span);
+
+      const metadata = injectTraceMetadata(ctx);
+      span.end();
+
+      const traceparent = metadata.get('traceparent')[0] as string;
+      expect(traceparent).toContain(span.spanContext().traceId);
+      expect(traceparent).toContain(span.spanContext().spanId);
+    });
+
+    it('injects nothing for a context with no recording span', () => {
+      const metadata = injectTraceMetadata(otelContext.active());
+      expect(metadata.get('traceparent')).toHaveLength(0);
+    });
+  });
+
+  describe('callWithTrace', () => {
+    it('opens a CLIENT span and carries its trace context in the call metadata', async () => {
+      let seen: Metadata | undefined;
+      const reply = { held: true, holdId: 'h1' };
+
+      const result = await callWithTrace<typeof reply>({
+        tracer,
+        rpcService: 'signalman.inventory.v1.Inventory',
+        method: 'Hold',
+        request: { bookingId: 'bk_1' },
+        invoke: (_request, metadata, callback) => {
+          seen = metadata;
+          callback(null, reply);
+        },
+      });
+
+      expect(result).toBe(reply);
+      const span = finishedSpan();
+      expect(span.kind).toBe(SpanKind.CLIENT);
+      expect(span.name).toBe('signalman.inventory.v1.Inventory/Hold');
+      expect(span.attributes).toMatchObject({
+        'rpc.system': 'grpc',
+        'rpc.service': 'signalman.inventory.v1.Inventory',
+        'rpc.method': 'Hold',
+      });
+      const traceparent = seen!.get('traceparent')[0] as string;
+      expect(traceparent).toContain(span.spanContext().traceId);
+      expect(traceparent).toContain(span.spanContext().spanId);
+    });
+
+    it('marks the CLIENT span errored and rejects on a transport failure', async () => {
+      const boom = new Error('14 UNAVAILABLE');
+
+      await expect(
+        callWithTrace({
+          tracer,
+          rpcService: 'signalman.inventory.v1.Inventory',
+          method: 'Hold',
+          request: {},
+          invoke: (_request, _metadata, callback) => callback(boom, undefined),
+        }),
+      ).rejects.toBe(boom);
+
+      const span = finishedSpan();
+      expect(span.status.code).toBe(SpanStatusCode.ERROR);
+      expect(span.status.message).toBe('14 UNAVAILABLE');
+      expect(span.events.map((e) => e.name)).toContain('exception');
+    });
+
+    it('propagates the trace end to end: the leg SERVER parent is the CLIENT span', async () => {
+      let metadata: Metadata | undefined;
+      await callWithTrace({
+        tracer,
+        rpcService: 'signalman.inventory.v1.Inventory',
+        method: 'Hold',
+        request: {},
+        invoke: (_request, carrier, callback) => {
+          metadata = carrier;
+          callback(null, {});
+        },
+      });
+      const clientSpan = finishedSpan();
+
+      // Feed the very metadata the client produced into the SERVER-side
+      // extractor: the leg's parent must be this CLIENT span, in its trace.
+      const inboundRpc = {
+        getType: () => 'rpc',
+        switchToRpc: () => ({ getContext: () => metadata }),
+      } as unknown as ExecutionContext;
+      const parent = trace.getSpanContext(resolveParentContext(inboundRpc));
+
+      expect(parent?.traceId).toBe(clientSpan.spanContext().traceId);
+      expect(parent?.spanId).toBe(clientSpan.spanContext().spanId);
+      expect(parent?.isRemote).toBe(true);
     });
   });
 });

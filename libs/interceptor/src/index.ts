@@ -4,7 +4,7 @@ export {
   type Outcome,
   type RedMetricsOptions,
 } from './red-metrics';
-export { resolveOperation, type ResolvedOperation } from './operation';
+export { resolveOperation, resolveParentContext, type ResolvedOperation } from './operation';
 export {
   ObservabilityInterceptor,
   type ObservabilityInterceptorOptions,

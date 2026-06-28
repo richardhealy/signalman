@@ -120,11 +120,24 @@ concrete slices needed to call it done.
   per-service relay wiring (broker) land next
 - ☐ Crash test: no lost and no phantom events
 
-### M3 — Trace propagation ☐
+### M3 — Trace propagation ◐
 
-- ☐ One booking = one connected trace across gRPC, async events, external hop
+- ◐ One booking = one connected trace across gRPC, async events, external hop —
+  the **synchronous gRPC half is wired**. The coordinator's leg clients open a
+  CLIENT span per RPC and inject the W3C `traceparent` into the request metadata
+  (`callWithTrace` / `injectTraceMetadata` in `services/coordinator/src/grpc`),
+  and `@signalman/interceptor` extracts that context on the SERVER side
+  (`resolveParentContext`) so each leg handler span **continues** the booking
+  trace instead of starting an orphan. Round-tripped end to end in unit tests
+  (client inject → server extract → same `traceId`, the CLIENT span as the
+  remote parent). The async-event hop (outbox PRODUCER → broker → inbox
+  CONSUMER) and the in-leg external supplier/PSP CLIENT hops are already
+  span-shaped; folding them onto the same wire trace lands with the broker
+  milestone
 - ☐ Span links for fan-out (one event, many consumers)
-- ☐ Spans align to OTel RPC + messaging semantic conventions
+- ◐ Spans align to OTel RPC + messaging semantic conventions — both sides of the
+  gRPC hop now carry `rpc.system`/`rpc.service`/`rpc.method` (CLIENT and SERVER);
+  the messaging-semconv check lands with the broker
 
 ### M4 — Compensations ◐
 
@@ -132,10 +145,12 @@ concrete slices needed to call it done.
   steps' compensations in reverse (`supplier.cancel → payments.void →
   inventory.release`) on any rejection or outage, best-effort over the idempotent
   leg compensations; unit-tested for every failure position and verified end to
-  end. The forced-mid-saga demo across a fully wired trace lands with M3
+  end. The compensation gRPC calls now carry the booking trace too (M3); the
+  forced-mid-saga demo across the fully wired stack lands with the broker
 - ◐ Compensations visible as spans — each compensation runs in its own
-  compensation-flagged span under the `Book` SERVER span; folding the legs' own
-  spans into the same cross-service trace lands with M3
+  compensation-flagged span under the `Book` SERVER span, and with M3's gRPC
+  propagation the legs' own SERVER spans now fold into the same cross-service
+  trace
 
 ### M5 — Idempotency ◐
 

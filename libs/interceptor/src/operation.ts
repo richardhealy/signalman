@@ -8,13 +8,19 @@
  * RPC and HTTP semantic conventions, so spans line up with the conventions the
  * spec's quality checklist calls out.
  */
-import { SpanKind, type Attributes } from '@opentelemetry/api';
+import {
+  SpanKind,
+  context as otelContext,
+  type Attributes,
+  type Context,
+} from '@opentelemetry/api';
 import {
   ATTR_CODE_FUNCTION_NAME,
   ATTR_HTTP_REQUEST_METHOD,
   ATTR_HTTP_ROUTE,
 } from '@opentelemetry/semantic-conventions';
 import { type ExecutionContext } from '@nestjs/common';
+import { extractContext, type BrokerHeaders } from '@signalman/propagation';
 
 // The `rpc.*` keys live in the semantic-conventions *incubating* entry point,
 // which TypeScript's classic `node` resolution can't see (it ignores the
@@ -89,6 +95,47 @@ function resolveHttp(context: ExecutionContext): ResolvedOperation {
     attributes,
     metricAttributes,
   };
+}
+
+/**
+ * A read view over gRPC request metadata: anything exposing `getMap()` that
+ * returns the message's header map. `@grpc/grpc-js`'s `Metadata` satisfies this,
+ * and so does a plain test double — the interceptor only needs to read the
+ * upstream `traceparent`, so it never has to import `@grpc/grpc-js` itself.
+ */
+interface MetadataCarrier {
+  getMap(): Record<string, string | Buffer>;
+}
+
+/** Narrow an unknown gRPC context to a {@link MetadataCarrier}. */
+function isMetadataCarrier(value: unknown): value is MetadataCarrier {
+  return value != null && typeof (value as { getMap?: unknown }).getMap === 'function';
+}
+
+/**
+ * Resolve the parent context a handler's SERVER span should continue from.
+ *
+ * For an inbound gRPC call the upstream `traceparent` rides in the request
+ * metadata, so extracting it makes the leg's span a child of the caller's span —
+ * the booking's trace stays connected across the service boundary instead of the
+ * leg starting an orphan. This is the cross-service half of "one booking is one
+ * connected trace"; the interceptor itself supplies the within-service half.
+ *
+ * Inbound HTTP at the gateway (the trace's entry point) and any non-RPC context
+ * carry no upstream parent, so the active context is returned and the span
+ * becomes a root.
+ *
+ * @param context - the NestJS execution context for the intercepted handler.
+ */
+export function resolveParentContext(context: ExecutionContext): Context {
+  if (context.getType() !== 'rpc') {
+    return otelContext.active();
+  }
+  const metadata: unknown = context.switchToRpc().getContext();
+  if (!isMetadataCarrier(metadata)) {
+    return otelContext.active();
+  }
+  return extractContext(metadata.getMap() as BrokerHeaders, otelContext.active());
 }
 
 /**

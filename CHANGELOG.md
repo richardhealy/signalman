@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- Trace propagation across the synchronous gRPC hops (M3, the headline's
+  synchronous half): a booking now stays **one connected trace** as the
+  coordinator drives the legs over gRPC. The coordinator's leg clients open a
+  **CLIENT span** per RPC and inject the W3C `traceparent` into the request
+  metadata (`callWithTrace` / `injectTraceMetadata` in
+  `services/coordinator/src/grpc/leg-clients.ts`, following the OTel RPC
+  semantic conventions), and `@signalman/interceptor` lifts that context on the
+  SERVER side (`resolveParentContext`) so each leg's handler span **continues**
+  the caller's trace instead of starting an orphan. HTTP at the gateway and any
+  non-RPC handler carry no upstream parent, so their spans remain trace roots.
+  Verified round-trip end to end in unit tests — client inject → server extract
+  → same `traceId` with the CLIENT span as the remote parent — plus CLIENT-span
+  shape, error marking, and the SERVER-side continuation. The async-event hop
+  (outbox PRODUCER → broker → inbox CONSUMER) folds onto the same trace with the
+  broker milestone.
+
+### Added — 2026-06-29
 - `services/reconciler`: the periodic comparison of the sources of truth (M6) —
   the spec's payoff, catching silent **divergence** between the systems that each
   own part of a booking's truth. Like the notifier it has no synchronous surface;
