@@ -15,7 +15,20 @@ concrete slices needed to call it done.
 - ☑ ESLint (flat config) + Prettier
 - ☑ CI workflow: install → lint → typecheck → build → test
 - ☑ `libs/propagation` — W3C trace-context inject/extract for broker headers
-- ☑ `services/gateway` — HTTP entry point with a health probe
+- ☑ `services/gateway` — the public **HTTP entry point**, the start of a booking
+  and of its trace. Beyond the health probe it now serves the booking surface:
+  `POST /bookings` validates the request, mints a booking id when absent, and
+  drives the saga by calling `Coordinator.Book` over gRPC, recording the outcome;
+  `GET /bookings/:id` is the thin status endpoint that reads the recorded outcome
+  back (carrying the booking's `traceId` so an operator can jump to its trace).
+  Telemetry starts at boot and `ObservabilityModule` wraps every request, so the
+  `POST /bookings` SERVER span is the **root** of the booking trace; the
+  coordinator client opens a CLIENT child span and injects the W3C `traceparent`
+  into the gRPC metadata, so the coordinator continues from the gateway (the
+  gateway → coordinator hop of M3). Hexagonal like the coordinator: the booking
+  service depends on a `CoordinatorPort` and a `BookingStore`, unit-tested against
+  fakes and an in-memory store (Postgres-backed later behind the same token), with
+  the live HTTP surface verified end to end via supertest and a booted process
 - ☑ All eight services scaffolded:
   - ☑ `inventory` — gRPC `Hold`/`Release` over NestJS microservices, holds +
     per-SKU availability domain, outbox-staged `inventory.held`/`.released`
@@ -122,6 +135,10 @@ concrete slices needed to call it done.
   (`Authorize`/`Capture`/`Void`), `supplier.proto` (`Confirm`/`Cancel`), and
   `ledger.proto` (`Commit`/`Reverse`) defined and served; the notifier contract
   upcoming
+- ◐ `gateway` is the booking's entry point — `POST /bookings` opens the root span
+  and calls `Coordinator.Book` over gRPC, returns the recorded outcome, and
+  `GET /bookings/:id` reads a booking's fate back; this is how a booking is
+  started from outside the system
 - ◐ Coordinator drives `hold → authorize → confirm → capture → commit` over gRPC
   (verified end to end against the four live leg services); the async `notify`
   step is implemented in the `notifier` service, which consumes `ledger.committed`
@@ -151,11 +168,15 @@ concrete slices needed to call it done.
 ### M3 — Trace propagation ◐
 
 - ◐ One booking = one connected trace across gRPC, async events, external hop —
-  **both the synchronous gRPC half and the async-event hop are now wired**. On
-  the sync side, the coordinator's leg clients open a CLIENT span per RPC and
-  inject the W3C `traceparent` into the request metadata (`callWithTrace` /
-  `injectTraceMetadata` in `services/coordinator/src/grpc`), and
-  `@signalman/interceptor` extracts that context on the SERVER side
+  **both the synchronous gRPC half and the async-event hop are now wired**. The
+  trace now starts at its true origin: the gateway's `POST /bookings` SERVER span
+  is the **root**, and the gateway's coordinator client opens a CLIENT span and
+  injects the W3C `traceparent` into the gRPC metadata, so the coordinator's
+  SERVER span continues from the gateway (the gateway → coordinator hop). From
+  there the coordinator's leg clients open a CLIENT span per RPC and inject the
+  same `traceparent` (`callWithTrace` / `injectTraceMetadata` in
+  `services/coordinator/src/grpc`, mirrored in `services/gateway/src/bookings`),
+  and `@signalman/interceptor` extracts that context on the SERVER side
   (`resolveParentContext`) so each leg handler span **continues** the booking
   trace. On the async side, `@signalman/broker` closes the loop: the outbox
   relay publishes each row through `BrokerPublisher` onto the `MessageBroker`

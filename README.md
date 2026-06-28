@@ -22,8 +22,10 @@ Foundations, the four saga participants, and the coordinating saga (milestones
 trace-context propagation library, the OpenTelemetry bootstrap library, the
 trace-correlated logging library, the observability interceptor (business spans +
 RED metrics), the transactional outbox library (durable staging + trace-aware
-relay), the idempotent inbox library (dedup + trace-continuing consumer), a
-gateway health endpoint, the **inventory service** — a gRPC source of truth for
+relay), the idempotent inbox library (dedup + trace-continuing consumer), the
+**gateway** — the public HTTP entry point that opens a booking's root span and
+drives the coordinator over gRPC (`POST /bookings` to start a booking,
+`GET /bookings/:id` for its status) — the **inventory service** — a gRPC source of truth for
 holds — the **payments service** — a gRPC source of truth for
 authorizations/captures wrapping a simulated PSP — the **supplier service** — a
 gRPC source of truth for partner confirmations wrapping a simulated, deliberately
@@ -37,10 +39,12 @@ idempotently via the inbox — and the **reconciler service** — the periodic
 backstop that compares the sources of truth, flags any divergence, and links each
 finding back to the originating booking trace — are all in place and verified.
 Cross-service **trace propagation** is now wired on **both halves** of the
-one-trace story (M3). Synchronous: the coordinator opens a CLIENT span per leg
-call and injects the W3C `traceparent` into the request metadata, and the
-observability interceptor extracts it so each leg's SERVER span continues the
-same booking trace instead of orphaning. Asynchronous: the new
+one-trace story (M3). Synchronous: the trace starts at its true origin — the
+gateway's `POST /bookings` SERVER span — whose coordinator client injects the
+W3C `traceparent` into the gRPC metadata so the coordinator continues from it;
+the coordinator in turn opens a CLIENT span per leg call and injects the same
+`traceparent`, and the observability interceptor extracts it so each leg's SERVER
+span continues the same booking trace instead of orphaning. Asynchronous: the new
 **`@signalman/broker`** library — the `MessageBroker` boundary plus an in-memory
 reference — closes the outbox → broker → inbox hop, with an end-to-end test
 proving the saga step, the relay's PRODUCER publish span, and the inbox's
@@ -64,7 +68,7 @@ OpenTelemetry JS exporting OTLP to Tempo + Grafana.
 ```
 signalman/
   services/
-    gateway/        # HTTP entry point; opens a booking's root span (M0: health probe)
+    gateway/        # HTTP entry point: opens a booking's root span, drives the coordinator (POST /bookings, GET /bookings/:id, /health)
     coordinator/    # saga orchestrator: drives the booking over gRPC + compensations (Book)
     inventory/      # gRPC source of truth for holds (Hold/Release) + outbox-staged events
     payments/       # gRPC source of truth for payments (Authorize/Capture/Void), wraps a simulated PSP
@@ -567,6 +571,25 @@ npm run typecheck  # tsc --noEmit across the workspace
 npm start                       # boots the gateway on PORT (default 3000)
 curl http://localhost:3000/health
 # {"status":"ok","service":"gateway"}
+```
+
+The gateway is the system's HTTP entry point — `POST /bookings` starts a booking
+(and its trace), `GET /bookings/:id` reads the recorded outcome back. It dials the
+coordinator at `COORDINATOR_GRPC_URL` (default `localhost:50050`), so a full
+booking needs the coordinator and the four legs up too (see below); with the
+coordinator down the call surfaces a `502`.
+
+```bash
+# Start a booking — booking_id is optional (the gateway mints one when omitted).
+curl -X POST http://localhost:3000/bookings \
+  -H 'content-type: application/json' \
+  -d '{"sku":"seat-economy","qty":2,"amount":4200,"currency":"USD"}'
+# 201 {"bookingId":"…","status":"booked","holdId":"…",…,"traceId":"…"}
+# (a saga failure is also 201, with "status":"failed" and failedStep/reason)
+
+# Read a booking's recorded outcome back.
+curl http://localhost:3000/bookings/<booking_id>
+# 200 {…} | 404 when the gateway has no record of that id
 ```
 
 ### Run the inventory service

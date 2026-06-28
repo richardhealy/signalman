@@ -7,6 +7,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- `services/gateway`: the public **HTTP entry point** — where a booking, and its
+  trace, begins. The gateway was a bare health probe; it now serves the booking
+  surface the spec calls for. `POST /bookings` validates the request, mints a
+  booking id when the caller omits one, and drives the saga by calling
+  `Coordinator.Book` over gRPC, then records and returns the outcome; a business
+  failure is a `201` with `status: "failed"` (the attempt is a real, recorded
+  thing), a malformed body a `400`, and a coordinator outage a `502` (the gateway
+  is up, its downstream is not). `GET /bookings/:id` is the thin **status
+  endpoint** that reads the recorded outcome back, carrying the booking's
+  `traceId` so an operator can jump straight to its trace. Telemetry now starts at
+  boot and `ObservabilityModule` wraps every request, so the `POST /bookings`
+  SERVER span is the **root** of the booking trace — its true origin. The
+  coordinator client opens a CLIENT child span and injects the W3C `traceparent`
+  into the gRPC metadata (the same `callWithTrace`/`injectTraceMetadata` seam the
+  coordinator uses for its legs), so the coordinator's SERVER span **continues**
+  from the gateway: the gateway → coordinator hop of "one booking is one connected
+  trace" (M3), the hop above the coordinator → leg hops already wired. Hexagonal
+  like the coordinator — the booking service depends on a `CoordinatorPort` and a
+  `BookingStore`, so it is unit-tested against fakes and an in-memory store
+  (Postgres-backed later behind the same token). Verified end to end: unit tests
+  for the validation, the request→command→record mapping, and the CLIENT-span
+  trace continuity (parent lineage + injected `traceparent` asserted against an
+  in-memory exporter); a supertest pass over the live HTTP routes (`201`/`400`/
+  `404`/`502`); and a booted process answering `GET /health`, `POST /bookings`,
+  and `GET /bookings/:id`. The Postgres-backed booking store lands with the
+  datastore milestone.
 - `libs/broker`: the **NATS JetStream adapter** (`NatsBroker`) — the first *real*
   transport behind the `MessageBroker` boundary, the production sibling of the
   in-memory reference, and the start of M0's "broker transport" work. It maps the

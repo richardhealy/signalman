@@ -16,7 +16,8 @@
       "entryFile": "main",
       "sourceRoot": "services/gateway/src",
       "compilerOptions": {
-        "tsConfigPath": "services/gateway/tsconfig.app.json"
+        "tsConfigPath": "services/gateway/tsconfig.app.json",
+        "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/gateway" }]
       }
     },
     "coordinator": {
