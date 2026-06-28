@@ -17,15 +17,17 @@ current status.
 
 ## Status
 
-Foundations plus the first saga participant (milestones **M0 → M1**). The
+Foundations plus the first two saga participants (milestones **M0 → M1**). The
 monorepo, tooling, CI, the trace-context propagation library, the OpenTelemetry
 bootstrap library, the trace-correlated logging library, the observability
 interceptor (business spans + RED metrics), the transactional outbox library
 (durable staging + trace-aware relay), the idempotent inbox library (dedup +
-trace-continuing consumer), a gateway health endpoint, and the **inventory
-service** — a gRPC source of truth for holds that stages outbox events — are in
-place and verified. The remaining services, the broker/Postgres/observability
-stack, and the coordinating saga are upcoming milestones.
+trace-continuing consumer), a gateway health endpoint, the **inventory
+service** — a gRPC source of truth for holds — and the **payments service** — a
+gRPC source of truth for authorizations/captures wrapping a simulated PSP — are
+in place and verified, both staging outbox events. The remaining services, the
+broker/Postgres/observability stack, and the coordinating saga are upcoming
+milestones.
 
 ## Stack
 
@@ -40,7 +42,8 @@ signalman/
   services/
     gateway/        # HTTP entry point; opens a booking's root span (M0: health probe)
     inventory/      # gRPC source of truth for holds (Hold/Release) + outbox-staged events
-    …               # coordinator, payments, supplier, ledger, notifier, reconciler (upcoming)
+    payments/       # gRPC source of truth for payments (Authorize/Capture/Void), wraps a simulated PSP
+    …               # coordinator, supplier, ledger, notifier, reconciler (upcoming)
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
@@ -228,6 +231,35 @@ off one connected trace. The in-memory hold and outbox stores are reference
 implementations; the Postgres-backed stores and the relay that drains events to
 the broker land with the datastore and broker milestones.
 
+### `services/payments`
+
+The money leg of the saga — the payments **source of truth**. It owns
+authorizations and captures, and exposes the saga's synchronous payment commands
+over gRPC (`proto/payments.proto`):
+
+- `Authorize(bookingId, amount, currency)` reserves funds with the PSP. It is
+  **idempotent per booking**: a retried authorization returns the standing one
+  rather than charging twice.
+- `Capture(bookingId)` takes the authorized funds — the saga's money-taking step.
+  Idempotent: a retry returns the standing capture.
+- `Void(bookingId)` releases the authorization — the saga **compensation**.
+  Idempotent: voiding an already-voided or unknown booking is a successful no-op.
+
+Behind the service sits a **simulated PSP**, the external source of truth the
+spec calls out as where divergence is born. `SimulatedPsp` injects controllable
+latency and decline/failure (`PSP_LATENCY_MS`, `PSP_DECLINE_RATE`,
+`PSP_FAILURE_RATE`), and wraps every call in a **CLIENT span** — the external
+boundary hop made visible in the booking trace. The service draws a sharp line
+between a PSP **decline** (a business "no", returned as data) and a PSP
+**outage** (a thrown error, propagated so the gRPC SERVER span errors and the
+coordinator can retry the hop).
+
+Each state change is paired with an outbox event (`payment.authorized` /
+`payment.captured` / `payment.voided`) staged through `@signalman/outbox`. As
+with inventory, the in-memory payment and outbox stores are reference
+implementations; the Postgres-backed stores and the broker relay land with later
+milestones.
+
 ## Getting started
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
@@ -258,6 +290,18 @@ npm run start:inventory         # boots the gRPC server on INVENTORY_GRPC_URL
 It registers the `signalman.inventory.v1.Inventory` service; drive it with any
 gRPC client (e.g. `grpcurl`) against `proto/inventory.proto`. Telemetry starts
 before the transport, so spans and RED metrics flow from the first request.
+
+### Run the payments service
+
+```bash
+npm run start:payments          # boots the gRPC server on PAYMENTS_GRPC_URL
+                                # (default 0.0.0.0:50052)
+```
+
+It registers the `signalman.payments.v1.Payments` service. The simulated PSP's
+behaviour is tunable via `PSP_LATENCY_MS`, `PSP_DECLINE_RATE`, and
+`PSP_FAILURE_RATE` — set them all to `0` for a deterministic, always-approving
+demo.
 
 ## Development
 

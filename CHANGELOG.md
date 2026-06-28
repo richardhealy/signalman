@@ -7,6 +7,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `services/payments`: the second saga participant — the payments source of
+  truth, the money leg of the booking saga. A NestJS gRPC microservice serves
+  the `Payments` contract (`Authorize`/`Capture`/`Void`, `proto/payments.proto`)
+  and owns authorizations and captures. `Authorize` is idempotent per booking (a
+  retry returns the standing authorization; a PSP decline is reported as data
+  with a reason), `Capture` is the idempotent money-taking step, and `Void` —
+  the saga compensation — is an idempotent no-op once already voided or absent.
+  Behind it sits a **simulated PSP** (`SimulatedPsp`) — the external source of
+  truth the spec calls out as where divergence is born — with controllable
+  latency and decline/failure injection (`PSP_LATENCY_MS`, `PSP_DECLINE_RATE`,
+  `PSP_FAILURE_RATE`); every PSP call is a CLIENT span (the external boundary
+  hop), and the service distinguishes a decline (returned data) from a PSP outage
+  (a thrown error that errors the gRPC span so the hop is observable). Each state
+  change stages a `payment.authorized`/`.captured`/`.voided` event through
+  `@signalman/outbox`, and every gRPC handler is wrapped in
+  `@signalman/interceptor`'s SERVER span. In-memory payment and outbox stores
+  stand in until the Postgres-backed stores land; the service boots as a
+  standalone gRPC microservice with telemetry started first, verified end to end
+  with a real gRPC client.
+
+### Added — 2026-06-28
 - `services/inventory`: the first downstream saga participant — the inventory
   source of truth. A NestJS gRPC microservice serves the `Inventory` contract
   (`Hold`/`Release`, `proto/inventory.proto`) and owns holds plus per-SKU

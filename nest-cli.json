@@ -29,6 +29,16 @@
         "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/inventory" }]
       }
     },
+    "payments": {
+      "type": "application",
+      "root": "services/payments",
+      "entryFile": "main",
+      "sourceRoot": "services/payments/src",
+      "compilerOptions": {
+        "tsConfigPath": "services/payments/tsconfig.app.json",
+        "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/payments" }]
+      }
+    },
     "otel": {
       "type": "library",
       "root": "libs/otel",

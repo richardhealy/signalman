@@ -21,7 +21,13 @@ concrete slices needed to call it done.
     per-SKU availability domain, outbox-staged `inventory.held`/`.released`
     events, observability interceptor on every gRPC handler; boots as a
     standalone gRPC microservice and verified end to end with a real client
-  - ☐ `coordinator`, `payments`, `supplier`, `ledger`, `notifier`, `reconciler`
+  - ☑ `payments` — gRPC `Authorize`/`Capture`/`Void` over NestJS microservices,
+    payment source of truth wrapping a **simulated PSP** (controllable latency +
+    decline/failure injection, each call a CLIENT span — the external boundary
+    hop), outbox-staged `payment.authorized`/`.captured`/`.voided` events,
+    observability interceptor on every gRPC handler; boots as a standalone gRPC
+    microservice and verified end to end with a real client
+  - ☐ `coordinator`, `supplier`, `ledger`, `notifier`, `reconciler`
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
@@ -34,17 +40,20 @@ concrete slices needed to call it done.
 ### M1 — Happy-path saga ◐
 
 - ◐ gRPC contracts for the synchronous commands — `inventory.proto`
-  (`Hold`/`Release`) defined and served; the other services' contracts upcoming
+  (`Hold`/`Release`) and `payments.proto` (`Authorize`/`Capture`/`Void`) defined
+  and served; the supplier/ledger/notifier contracts upcoming
 - ☐ Coordinator drives `hold → authorize → confirm → capture/commit → notify`
-- ◐ Per-service state — inventory owns holds and per-SKU availability (in-memory
-  reference store; the Postgres-backed store lands with the datastore milestone)
+- ◐ Per-service state — inventory owns holds and per-SKU availability; payments
+  owns authorizations and captures, wrapping a simulated PSP (in-memory reference
+  stores; the Postgres-backed stores land with the datastore milestone)
 
 ### M2 — Outbox ◐
 
 - ◐ Transactional outbox table + relay per service — reusable `libs/outbox`
   (record staging, store contract, trace-aware relay) is built and unit-tested;
-  the inventory service now stages `inventory.held`/`inventory.released` events
-  through an `OutboxStore` alongside its state change; the Postgres-backed
+  the inventory service stages `inventory.held`/`inventory.released` and the
+  payments service stages `payment.authorized`/`.captured`/`.voided` events
+  through an `OutboxStore` alongside their state changes; the Postgres-backed
   `OutboxStore` and per-service relay wiring (broker) land next
 - ☐ Crash test: no lost and no phantom events
 
@@ -78,7 +87,10 @@ concrete slices needed to call it done.
 
 ### M8 — Harden + ship ☐
 
-- ☐ Supplier latency/failure injection
+- ◐ External-boundary latency/failure injection — the payments `SimulatedPsp`
+  already injects controllable latency and decline/failure on the PSP hop (an
+  errored CLIENT span when it fails); the supplier simulator applies the same
+  pattern to the partner boundary, upcoming
 - ☐ README trace screenshot including a compensation
 - ☐ Release
 
