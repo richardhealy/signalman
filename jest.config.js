@@ -10,6 +10,7 @@ module.exports = {
   coverageDirectory: './coverage',
   testEnvironment: 'node',
   moduleNameMapper: {
+    '^@signalman/otel(|/.*)$': '<rootDir>/libs/otel/src/$1',
     '^@signalman/propagation(|/.*)$': '<rootDir>/libs/propagation/src/$1',
   },
 };

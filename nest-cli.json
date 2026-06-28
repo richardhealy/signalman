@@ -19,6 +19,15 @@
         "tsConfigPath": "services/gateway/tsconfig.app.json"
       }
     },
+    "otel": {
+      "type": "library",
+      "root": "libs/otel",
+      "entryFile": "index",
+      "sourceRoot": "libs/otel/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/otel/tsconfig.lib.json"
+      }
+    },
     "propagation": {
       "type": "library",
       "root": "libs/propagation",

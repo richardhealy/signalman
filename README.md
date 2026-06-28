@@ -18,9 +18,9 @@ current status.
 ## Status
 
 Early scaffold (milestone **M0**). The monorepo, tooling, CI, the trace-context
-propagation library, and a gateway health endpoint are in place and verified. The
-remaining services, the broker/Postgres/observability stack, and the saga itself
-are upcoming milestones.
+propagation library, the OpenTelemetry bootstrap library, and a gateway health
+endpoint are in place and verified. The remaining services, the
+broker/Postgres/observability stack, and the saga itself are upcoming milestones.
 
 ## Stack
 
@@ -36,12 +36,29 @@ signalman/
     gateway/        # HTTP entry point; opens a booking's root span (M0: health probe)
     …               # coordinator, inventory, payments, supplier, ledger, notifier, reconciler (upcoming)
   libs/
+    otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
-    …               # otel, outbox, inbox, interceptor, logging (upcoming)
+    …               # outbox, inbox, interceptor, logging (upcoming)
 ```
 
 The monorepo uses NestJS monorepo mode. Libraries are imported via path aliases
-(e.g. `@signalman/propagation`).
+(e.g. `@signalman/otel`, `@signalman/propagation`).
+
+### `@signalman/otel`
+
+A service boots telemetry once, before any application module loads, so the
+registered instrumentations can patch what they hook into:
+
+```ts
+import { startTelemetry } from '@signalman/otel';
+
+startTelemetry({ serviceName: 'coordinator', serviceVersion: '0.1.0' });
+```
+
+Traces and metrics export over OTLP/HTTP to the Collector, configured through the
+standard `OTEL_EXPORTER_OTLP_*` environment variables (defaulting to
+`http://localhost:4318`). The returned handle flushes on `SIGTERM`/`SIGINT` so no
+spans are lost on shutdown.
 
 ## Getting started
 

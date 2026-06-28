@@ -17,7 +17,8 @@ concrete slices needed to call it done.
 - ☑ `libs/propagation` — W3C trace-context inject/extract for broker headers
 - ☑ `services/gateway` — HTTP entry point with a health probe
 - ☐ Remaining services scaffolded: `coordinator`, `inventory`, `payments`, `supplier`, `ledger`, `notifier`, `reconciler`
-- ☐ Remaining libs scaffolded: `otel`, `outbox`, `inbox`, `interceptor`, `logging`
+- ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
+- ☐ Remaining libs scaffolded: `outbox`, `inbox`, `interceptor`, `logging`
 - ☐ Postgres per service, broker (NATS JetStream/Kafka), OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
