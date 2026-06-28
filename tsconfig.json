@@ -23,7 +23,9 @@
       "@signalman/otel": ["libs/otel/src"],
       "@signalman/otel/*": ["libs/otel/src/*"],
       "@signalman/propagation": ["libs/propagation/src"],
-      "@signalman/propagation/*": ["libs/propagation/src/*"]
+      "@signalman/propagation/*": ["libs/propagation/src/*"],
+      "@signalman/logging": ["libs/logging/src"],
+      "@signalman/logging/*": ["libs/logging/src/*"]
     }
   }
 }

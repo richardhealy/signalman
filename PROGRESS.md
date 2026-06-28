@@ -18,7 +18,8 @@ concrete slices needed to call it done.
 - ☑ `services/gateway` — HTTP entry point with a health probe
 - ☐ Remaining services scaffolded: `coordinator`, `inventory`, `payments`, `supplier`, `ledger`, `notifier`, `reconciler`
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
-- ☐ Remaining libs scaffolded: `outbox`, `inbox`, `interceptor`, `logging`
+- ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
+- ☐ Remaining libs scaffolded: `outbox`, `inbox`, `interceptor`
 - ☐ Postgres per service, broker (NATS JetStream/Kafka), OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 

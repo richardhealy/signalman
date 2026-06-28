@@ -18,9 +18,10 @@ current status.
 ## Status
 
 Early scaffold (milestone **M0**). The monorepo, tooling, CI, the trace-context
-propagation library, the OpenTelemetry bootstrap library, and a gateway health
-endpoint are in place and verified. The remaining services, the
-broker/Postgres/observability stack, and the saga itself are upcoming milestones.
+propagation library, the OpenTelemetry bootstrap library, the trace-correlated
+logging library, and a gateway health endpoint are in place and verified. The
+remaining services, the broker/Postgres/observability stack, and the saga itself
+are upcoming milestones.
 
 ## Stack
 
@@ -38,11 +39,12 @@ signalman/
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
-    …               # outbox, inbox, interceptor, logging (upcoming)
+    logging/        # trace-correlated structured JSON logger (NestJS LoggerService)
+    …               # outbox, inbox, interceptor (upcoming)
 ```
 
 The monorepo uses NestJS monorepo mode. Libraries are imported via path aliases
-(e.g. `@signalman/otel`, `@signalman/propagation`).
+(e.g. `@signalman/otel`, `@signalman/propagation`, `@signalman/logging`).
 
 ### `@signalman/otel`
 
@@ -59,6 +61,26 @@ Traces and metrics export over OTLP/HTTP to the Collector, configured through th
 standard `OTEL_EXPORTER_OTLP_*` environment variables (defaulting to
 `http://localhost:4318`). The returned handle flushes on `SIGTERM`/`SIGINT` so no
 spans are lost on shutdown.
+
+### `@signalman/logging`
+
+Every service logs structured JSON lines that carry the active span's
+`trace_id`/`span_id`/`trace_flags`, so a log in Grafana/Loki links straight back
+to the span — and therefore the booking — it was written under:
+
+```ts
+import { createLogger } from '@signalman/logging';
+
+const logger = createLogger({ service: 'coordinator', context: 'BookingSaga' });
+logger.info('hold placed', { booking_id: 'bk_1', qty: 2 });
+// {"timestamp":"…","level":"info","service":"coordinator","context":"BookingSaga",
+//  "message":"hold placed","trace_id":"…","span_id":"…","trace_flags":"01",
+//  "booking_id":"bk_1","qty":2}
+```
+
+It implements the NestJS `LoggerService` interface, so `app.useLogger(logger)`
+routes framework logs through the same correlated pipeline, and `logger.child({…})`
+binds a context and fields for a unit of work.
 
 ## Getting started
 
