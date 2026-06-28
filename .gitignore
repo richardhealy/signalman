@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS / editor / agent tooling
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/
+CLAUDE.md
+
+# Scratch
+scratchpad/
+tmp/
