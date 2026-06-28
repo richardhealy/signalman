@@ -16,7 +16,7 @@ concrete slices needed to call it done.
 - ☑ CI workflow: install → lint → typecheck → build → test
 - ☑ `libs/propagation` — W3C trace-context inject/extract for broker headers
 - ☑ `services/gateway` — HTTP entry point with a health probe
-- ◐ Remaining services scaffolded:
+- ☑ All eight services scaffolded:
   - ☑ `inventory` — gRPC `Hold`/`Release` over NestJS microservices, holds +
     per-SKU availability domain, outbox-staged `inventory.held`/`.released`
     events, observability interceptor on every gRPC handler; boots as a
@@ -64,7 +64,23 @@ concrete slices needed to call it done.
     end to end (process-once, redelivery, two-layer dedup, trace continuation with
     the provider hop nested under the consume span, NACK-on-outage) and verified to
     boot
-  - ☐ `reconciler`
+  - ☑ `reconciler` — the periodic comparison of the sources of truth. Boots as a
+    standalone Nest application context (a background job, no synchronous gRPC/HTTP
+    surface); a `ReconciliationScheduler` runs `ReconcilerService.runOnce` on an
+    interval (`RECONCILER_INTERVAL_MS`, surviving a failed pass so the backstop
+    keeps running). Each pass pulls settled bookings from a `SourceOfTruthGateway`,
+    compares each across inventory/supplier/ledger with the pure
+    `detectDivergences` engine (three invariants: `supplier_confirmed_ledger_missing`
+    — the headline — `ledger_committed_supplier_unconfirmed`, and `orphaned_hold`),
+    and records each new disagreement as a `DivergenceFinding`, idempotent per
+    `(bookingId, kind)`. Every pass runs under a `reconcile.pass` span and every
+    new finding opens a `reconcile.divergence` span carrying a **span link** back
+    to the originating booking trace (and stamps the finding's `traceId`) — the
+    "finding linked to the trace" payoff. Unit-tested end to end against the
+    in-memory gateway/findings reference stores (detection across all invariants,
+    cross-pass idempotency, trace-linked spans, pass-error handling) and verified
+    to boot; the broker/Postgres-backed gateway and findings store land with the
+    datastore/broker milestones behind the same DI tokens
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
@@ -131,10 +147,22 @@ concrete slices needed to call it done.
   Postgres-backed `InboxStore` and the remaining consumers land with the services
   and broker
 
-### M6 — Reconciler ☐
+### M6 — Reconciler ◐
 
-- ☐ Periodic comparison of sources of truth (supplier vs ledger vs inventory)
-- ☐ Divergence findings linked to the originating booking trace
+- ◐ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
+  the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler, and
+  the pure `detectDivergences` engine compares each settled booking's
+  inventory/supplier/ledger states against the consistency invariants. The
+  comparison, the scheduler, the findings store, and the trace linkage are built
+  and unit-tested against the in-memory `SourceOfTruthGateway` reference; the
+  broker/Postgres-backed gateway that feeds it real per-service state (subscribing
+  to `inventory.*`/`supplier.*`/`ledger.*`) lands with the datastore/broker
+  milestones
+- ☑ Divergence findings linked to the originating booking trace — each new
+  `DivergenceFinding` opens a `reconcile.divergence` span carrying a span link to
+  the booking's trace context (lifted from the snapshot) and stamps the finding's
+  `traceId`, so a finding is navigable straight back to the trace that explains
+  it, even though the reconciler runs out-of-band on its own trace
 
 ### M7 — Metrics + logs ◐
 

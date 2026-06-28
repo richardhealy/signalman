@@ -31,11 +31,13 @@ slow-and-flaky external partner — the **ledger service** — the internal gRPC
 source of truth for the financial record (Commit/Reverse) — the
 **coordinator service** — the saga orchestrator that drives a booking across all
 four legs over gRPC and unwinds the completed steps in reverse on any failure —
-and the **notifier service** — the async tail that consumes the booking's
-terminal `ledger.committed` event and tells the customer through a simulated
-provider, idempotently via the inbox — are in place and verified. The remaining
-service (reconciler), the broker/Postgres/observability stack, and cross-service
-trace propagation are upcoming milestones.
+the **notifier service** — the async tail that consumes the booking's terminal
+`ledger.committed` event and tells the customer through a simulated provider,
+idempotently via the inbox — and the **reconciler service** — the periodic
+backstop that compares the sources of truth, flags any divergence, and links each
+finding back to the originating booking trace — are all in place and verified.
+The broker/Postgres/observability stack and cross-service trace propagation are
+the upcoming milestones.
 
 ## Stack
 
@@ -55,7 +57,7 @@ signalman/
     supplier/       # gRPC source of truth for partner confirmations (Confirm/Cancel), wraps a simulated partner
     ledger/         # internal gRPC source of truth for the financial record (Commit/Reverse) + outbox-staged events
     notifier/       # async consumer: tells the customer on ledger.committed, via a simulated provider (inbox-deduped)
-    …               # reconciler (upcoming)
+    reconciler/     # periodic job: compares the sources of truth, emits divergence findings linked to the trace
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
@@ -388,6 +390,41 @@ stages no outbox event. The in-memory notification and inbox stores are referenc
 implementations; the Postgres-backed stores and the broker subscription that feeds
 the consumer land with later milestones.
 
+### `services/reconciler`
+
+The **reconciler** — the spec's payoff. The failure mode that matters in this
+system is not a crash, it is *silent divergence*: the supplier confirmed but the
+ledger thinks it failed, or a hold was never released. The reconciler is the
+backstop that catches it. Like the notifier it has no synchronous surface; it is a
+periodic background job.
+
+- A `ReconciliationScheduler` runs a pass on an interval (`RECONCILER_INTERVAL_MS`,
+  default 30s) and never lets a single failed pass kill the loop — reconciliation
+  must keep running precisely when something else is going wrong.
+- Each pass pulls every *settled* booking from a `SourceOfTruthGateway` as a
+  cross-source snapshot (what inventory, the supplier, and the ledger each report)
+  and runs the pure `detectDivergences` engine over it. Three invariants:
+  - **`supplier_confirmed_ledger_missing`** *(critical)* — the partner confirmed a
+    booking with no committed financial record. The headline case.
+  - **`ledger_committed_supplier_unconfirmed`** *(critical)* — the mirror: money
+    posted for a booking the partner is not holding.
+  - **`orphaned_hold`** *(warning)* — inventory still held for a booking that did
+    not complete; the hold was never released.
+- Each new disagreement becomes a `DivergenceFinding`, **idempotent per
+  `(bookingId, kind)`** so a recurring drift is recorded once, not once per pass.
+
+Observability is the point, so every finding is **linked back to the booking
+trace**: the pass runs under a `reconcile.pass` span, and each new finding opens a
+`reconcile.divergence` span that carries a **span link** to the originating
+booking's trace context (and stamps the finding's `traceId`). From a divergence
+you jump straight to the trace that explains how the booking got there — even
+though the reconciler runs out-of-band on its own trace. Keeping liveness in the
+gateway (it only emits bookings past a settle-grace window) lets the comparison
+stay a pure function of the snapshot. The in-memory `SourceOfTruthGateway` and
+findings store are reference implementations; the broker/Postgres-backed gateway
+that subscribes to `inventory.*`/`supplier.*`/`ledger.*` to build the projection
+lands with later milestones, behind the same DI tokens.
+
 ## Getting started
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
@@ -501,6 +538,20 @@ subscription that delivers `ledger.committed` to it lands with the broker
 milestone; until then its behaviour — consume-once, redelivery-safe, trace-
 continuing, NACK-on-outage — is exercised by the unit tests. Tune the simulated
 provider with `NOTIFIER_LATENCY_MS` and `NOTIFIER_FAILURE_RATE`.
+
+### Run the reconciler service
+
+```bash
+npm run start:reconciler        # boots the periodic job; logs "reconciler ready"
+RECONCILER_INTERVAL_MS=5000 npm run start:reconciler   # reconcile every 5s
+```
+
+The reconciler is a periodic background job with no synchronous surface, so it
+boots as an application context and runs a reconciliation pass on its interval (the
+interval timer also keeps it resident). Its source gateway is the in-memory
+reference until the broker/datastore-backed gateway lands, so passes find no
+bookings for now — but the cadence, the comparison engine, and the trace-linked
+findings are all live and exercised by the unit tests.
 
 ## Development
 

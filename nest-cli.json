@@ -78,6 +78,15 @@
         "tsConfigPath": "services/notifier/tsconfig.app.json"
       }
     },
+    "reconciler": {
+      "type": "application",
+      "root": "services/reconciler",
+      "entryFile": "main",
+      "sourceRoot": "services/reconciler/src",
+      "compilerOptions": {
+        "tsConfigPath": "services/reconciler/tsconfig.app.json"
+      }
+    },
     "otel": {
       "type": "library",
       "root": "libs/otel",

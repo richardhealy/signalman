@@ -7,6 +7,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- `services/reconciler`: the periodic comparison of the sources of truth (M6) —
+  the spec's payoff, catching silent **divergence** between the systems that each
+  own part of a booking's truth. Like the notifier it has no synchronous surface;
+  a `ReconciliationScheduler` runs `ReconcilerService.runOnce` on an interval
+  (`RECONCILER_INTERVAL_MS`, default 30s) and survives a failed pass so the
+  backstop keeps running when something else is going wrong. Each pass pulls every
+  *settled* booking from a `SourceOfTruthGateway` as a cross-source snapshot and
+  runs the pure `detectDivergences` engine over it — three invariants:
+  `supplier_confirmed_ledger_missing` (the partner confirmed a booking with no
+  committed financial record — the headline case), `ledger_committed_supplier_unconfirmed`
+  (money posted for a booking the partner is not holding), and `orphaned_hold`
+  (inventory still held for a booking that did not complete). Each new
+  disagreement becomes a `DivergenceFinding`, **idempotent per `(bookingId, kind)`**
+  so a recurring drift is recorded once, not once per pass. Every finding is
+  **linked back to the booking trace**: the pass runs under a `reconcile.pass`
+  span, and each new finding opens a `reconcile.divergence` span carrying a **span
+  link** to the originating booking's trace context (and stamps the finding's
+  `traceId`), so a divergence is navigable straight to the trace that explains it
+  even though the reconciler runs out-of-band on its own trace. Keeping liveness
+  in the gateway lets the comparison stay a pure function of the snapshot. It boots
+  as a standalone Nest application context and is unit-tested end to end —
+  detection across all invariants, cross-pass idempotency, trace-linked finding
+  spans, and pass-error handling. The broker/Postgres-backed gateway (subscribing
+  to `inventory.*`/`supplier.*`/`ledger.*`) and findings store land with later
+  milestones, behind the same DI tokens.
 - `services/notifier`: the async **tail** of the saga — the `… -> notify` step,
   and the first real consumer of `@signalman/inbox`. Unlike the four legs the
   notifier is not a synchronous gRPC participant; it is a pure **event consumer**
