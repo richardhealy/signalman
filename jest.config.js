@@ -13,5 +13,6 @@ module.exports = {
     '^@signalman/otel(|/.*)$': '<rootDir>/libs/otel/src/$1',
     '^@signalman/propagation(|/.*)$': '<rootDir>/libs/propagation/src/$1',
     '^@signalman/logging(|/.*)$': '<rootDir>/libs/logging/src/$1',
+    '^@signalman/interceptor(|/.*)$': '<rootDir>/libs/interceptor/src/$1',
   },
 };

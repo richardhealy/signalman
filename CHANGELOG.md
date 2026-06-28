@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `libs/interceptor`: NestJS observability interceptor. Wraps every inbound
+  handler in a SERVER span made active for the call (so child spans join the
+  trace) and records RED metrics — a `signalman.operation.duration` histogram
+  (rate via count, duration via distribution) and a `signalman.operation.errors`
+  counter — tagged with low-cardinality `operation`/transport/`outcome`
+  dimensions. Resolves HTTP and gRPC contexts onto the OTel RPC/HTTP semantic
+  conventions, marks errored spans with `error.type` and a recorded exception,
+  and ships an `ObservabilityModule.forRoot({ scope })` that wires it (globally
+  by default) using the `@signalman/otel` tracer and meter.
+
+### Added — 2026-06-28
 - `libs/logging`: trace-correlated structured JSON logger. `createLogger`/
   `StructuredLogger` emit one JSON object per line carrying `timestamp`, `level`,
   `service`, and the active span's `trace_id`/`span_id`/`trace_flags`, so logs

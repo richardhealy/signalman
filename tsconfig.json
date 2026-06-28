@@ -25,7 +25,9 @@
       "@signalman/propagation": ["libs/propagation/src"],
       "@signalman/propagation/*": ["libs/propagation/src/*"],
       "@signalman/logging": ["libs/logging/src"],
-      "@signalman/logging/*": ["libs/logging/src/*"]
+      "@signalman/logging/*": ["libs/logging/src/*"],
+      "@signalman/interceptor": ["libs/interceptor/src"],
+      "@signalman/interceptor/*": ["libs/interceptor/src/*"]
     }
   }
 }

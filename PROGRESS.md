@@ -19,7 +19,8 @@ concrete slices needed to call it done.
 - ☐ Remaining services scaffolded: `coordinator`, `inventory`, `payments`, `supplier`, `ledger`, `notifier`, `reconciler`
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
-- ☐ Remaining libs scaffolded: `outbox`, `inbox`, `interceptor`
+- ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
+- ☐ Remaining libs scaffolded: `outbox`, `inbox`
 - ☐ Postgres per service, broker (NATS JetStream/Kafka), OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
@@ -54,10 +55,10 @@ concrete slices needed to call it done.
 - ☐ Periodic comparison of sources of truth (supplier vs ledger vs inventory)
 - ☐ Divergence findings linked to the originating booking trace
 
-### M7 — Metrics + logs ☐
+### M7 — Metrics + logs ◐
 
-- ☐ RED metrics and per-step SLOs in Grafana
-- ☐ Trace-correlated structured logging (`trace_id`/`span_id`)
+- ◐ RED metrics and per-step SLOs in Grafana (RED instrumentation lives in `libs/interceptor`; Grafana dashboards/SLOs still to wire)
+- ☑ Trace-correlated structured logging (`trace_id`/`span_id`) — `libs/logging`
 
 ### M8 — Harden + ship ☐
 
