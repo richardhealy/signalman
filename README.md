@@ -24,12 +24,13 @@ interceptor (business spans + RED metrics), the transactional outbox library
 (durable staging + trace-aware relay), the idempotent inbox library (dedup +
 trace-continuing consumer), a gateway health endpoint, the **inventory
 service** — a gRPC source of truth for holds — the **payments service** — a
-gRPC source of truth for authorizations/captures wrapping a simulated PSP — and
-the **supplier service** — a gRPC source of truth for partner confirmations
-wrapping a simulated, deliberately slow-and-flaky external partner — are in place
-and verified, all three staging outbox events. The remaining services, the
-broker/Postgres/observability stack, and the coordinating saga are upcoming
-milestones.
+gRPC source of truth for authorizations/captures wrapping a simulated PSP — the
+**supplier service** — a gRPC source of truth for partner confirmations
+wrapping a simulated, deliberately slow-and-flaky external partner — and the
+**ledger service** — the internal gRPC source of truth for the financial record
+(Commit/Reverse) — are in place and verified, all four staging outbox events.
+The remaining services, the broker/Postgres/observability stack, and the
+coordinating saga are upcoming milestones.
 
 ## Stack
 
@@ -46,7 +47,8 @@ signalman/
     inventory/      # gRPC source of truth for holds (Hold/Release) + outbox-staged events
     payments/       # gRPC source of truth for payments (Authorize/Capture/Void), wraps a simulated PSP
     supplier/       # gRPC source of truth for partner confirmations (Confirm/Cancel), wraps a simulated partner
-    …               # coordinator, ledger, notifier, reconciler (upcoming)
+    ledger/         # internal gRPC source of truth for the financial record (Commit/Reverse) + outbox-staged events
+    …               # coordinator, notifier, reconciler (upcoming)
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
@@ -291,6 +293,33 @@ Each state change is paired with an outbox event (`supplier.confirmed` /
 confirmation and outbox stores are reference implementations; the Postgres-backed
 stores and the broker relay land with later milestones.
 
+### `services/ledger`
+
+The financial-record leg of the saga — the ledger **source of truth**. It owns
+the record of what actually happened financially, and exposes the saga's
+synchronous ledger commands over gRPC (`proto/ledger.proto`):
+
+- `Commit(bookingId, amount, currency, captureId)` posts the booking's money to
+  the financial record — the saga's "commit to ledger" step, run after payments
+  captures. It is **idempotent per booking**: a retried commit returns the
+  standing entry rather than posting twice.
+- `Reverse(bookingId)` backs the posting out — the saga **compensation**.
+  Idempotent: reversing an already-reversed or unknown booking is a successful
+  no-op, so a compensation can fire more than once.
+
+Unlike the inventory, payments, and supplier legs, the ledger wraps **no external
+boundary** — it is our own authoritative record, so a commit has no outage path.
+Its only non-commit outcome is a business **rejection** (a non-positive amount,
+returned as data with a reason). The `uint64 amount` field is decoded as a JS
+number at the gRPC boundary (`loader: { longs: Number }`), so the amount the
+ledger posts — and stages into its events — is the plain number its types
+declare, ready for the reconciler to compare against the other sources of truth.
+
+Each state change is paired with an outbox event (`ledger.committed` /
+`ledger.reversed`) staged through `@signalman/outbox`. The in-memory ledger and
+outbox stores are reference implementations; the Postgres-backed stores and the
+broker relay land with later milestones.
+
 ## Getting started
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
@@ -345,6 +374,18 @@ It registers the `signalman.supplier.v1.Supplier` service. The simulated
 partner's behaviour is tunable via `SUPPLIER_LATENCY_MS`, `SUPPLIER_REJECT_RATE`,
 and `SUPPLIER_FAILURE_RATE` — set them all to `0` for a deterministic,
 always-confirming demo.
+
+### Run the ledger service
+
+```bash
+npm run start:ledger            # boots the gRPC server on LEDGER_GRPC_URL
+                                # (default 0.0.0.0:50054)
+```
+
+It registers the `signalman.ledger.v1.Ledger` service; drive it with any gRPC
+client (e.g. `grpcurl`) against `proto/ledger.proto`. The ledger has no external
+boundary to tune — a `Commit` with a positive amount always posts; a non-positive
+amount is rejected as `invalid_amount`.
 
 ## Development
 

@@ -34,7 +34,15 @@ concrete slices needed to call it done.
     `supplier.confirmed`/`.cancelled` events, observability interceptor on every
     gRPC handler; boots as a standalone gRPC microservice and verified end to end
     with a real client
-  - ☐ `coordinator`, `ledger`, `notifier`, `reconciler`
+  - ☑ `ledger` — gRPC `Commit`/`Reverse` over NestJS microservices, the
+    **internal** financial-record source of truth (no external boundary: a commit
+    is a posting that always succeeds for a positive amount, a non-positive amount
+    is rejected as data), outbox-staged `ledger.committed`/`.reversed` events,
+    observability interceptor on every gRPC handler; decodes the `uint64 amount`
+    as a JS number at the boundary (`loader: { longs: Number }`) so posted amounts
+    and event payloads are plain numbers; boots as a standalone gRPC microservice
+    and verified end to end with a real client
+  - ☐ `coordinator`, `notifier`, `reconciler`
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
@@ -47,24 +55,26 @@ concrete slices needed to call it done.
 ### M1 — Happy-path saga ◐
 
 - ◐ gRPC contracts for the synchronous commands — `inventory.proto`
-  (`Hold`/`Release`), `payments.proto` (`Authorize`/`Capture`/`Void`), and
-  `supplier.proto` (`Confirm`/`Cancel`) defined and served; the ledger/notifier
-  contracts upcoming
+  (`Hold`/`Release`), `payments.proto` (`Authorize`/`Capture`/`Void`),
+  `supplier.proto` (`Confirm`/`Cancel`), and `ledger.proto` (`Commit`/`Reverse`)
+  defined and served; the notifier contract upcoming
 - ☐ Coordinator drives `hold → authorize → confirm → capture/commit → notify`
 - ◐ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
-  partner confirmations, wrapping a simulated external partner (in-memory
-  reference stores; the Postgres-backed stores land with the datastore milestone)
+  partner confirmations, wrapping a simulated external partner; ledger owns the
+  financial record (commit/reverse, no external boundary) (in-memory reference
+  stores; the Postgres-backed stores land with the datastore milestone)
 
 ### M2 — Outbox ◐
 
 - ◐ Transactional outbox table + relay per service — reusable `libs/outbox`
   (record staging, store contract, trace-aware relay) is built and unit-tested;
   the inventory service stages `inventory.held`/`inventory.released`, the
-  payments service stages `payment.authorized`/`.captured`/`.voided`, and the
-  supplier service stages `supplier.confirmed`/`.cancelled` events through an
-  `OutboxStore` alongside their state changes; the Postgres-backed `OutboxStore`
-  and per-service relay wiring (broker) land next
+  payments service stages `payment.authorized`/`.captured`/`.voided`, the
+  supplier service stages `supplier.confirmed`/`.cancelled`, and the ledger
+  service stages `ledger.committed`/`.reversed` events through an `OutboxStore`
+  alongside their state changes; the Postgres-backed `OutboxStore` and
+  per-service relay wiring (broker) land next
 - ☐ Crash test: no lost and no phantom events
 
 ### M3 — Trace propagation ☐

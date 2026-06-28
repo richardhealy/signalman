@@ -49,6 +49,16 @@
         "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/supplier" }]
       }
     },
+    "ledger": {
+      "type": "application",
+      "root": "services/ledger",
+      "entryFile": "main",
+      "sourceRoot": "services/ledger/src",
+      "compilerOptions": {
+        "tsConfigPath": "services/ledger/tsconfig.app.json",
+        "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/ledger" }]
+      }
+    },
     "otel": {
       "type": "library",
       "root": "libs/otel",

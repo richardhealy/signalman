@@ -7,6 +7,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `services/ledger`: the fourth saga participant — the financial-record source of
+  truth, the `capture + commit to ledger` leg of the booking saga. A NestJS gRPC
+  microservice serves the `Ledger` contract (`Commit`/`Reverse`,
+  `proto/ledger.proto`) and owns the record of what actually happened
+  financially. `Commit` posts the booking's money and is idempotent per booking
+  (a retry returns the standing entry; a non-positive amount is reported as data
+  with a reason), and `Reverse` — the saga compensation — is an idempotent no-op
+  once already reversed or absent. Unlike the inventory, payments, and supplier
+  legs the ledger wraps **no external boundary**: it is our own authoritative
+  record, so a commit has no outage path, only the business rejection. The
+  `uint64 amount` field is decoded as a JS number at the gRPC boundary
+  (`loader: { longs: Number }`) so the posted amount and its event payloads are
+  plain numbers — what the reconciler later compares against the other sources of
+  truth. Each state change stages a `ledger.committed`/`.reversed` event through
+  `@signalman/outbox`, and every gRPC handler is wrapped in
+  `@signalman/interceptor`'s SERVER span. In-memory ledger and outbox stores stand
+  in until the Postgres-backed stores land; the service boots as a standalone gRPC
+  microservice with telemetry started first, verified end to end with a real gRPC
+  client.
+
+### Added — 2026-06-28
 - `services/supplier`: the third saga participant — the partner source of truth,
   the confirmation leg of the booking saga. A NestJS gRPC microservice serves the
   `Supplier` contract (`Confirm`/`Cancel`, `proto/supplier.proto`) and owns
