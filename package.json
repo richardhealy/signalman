@@ -8,9 +8,10 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "nest build otel && nest build propagation && nest build logging && nest build interceptor && nest build outbox && nest build inbox && nest build gateway",
+    "build": "nest build otel && nest build propagation && nest build logging && nest build interceptor && nest build outbox && nest build inbox && nest build gateway && nest build inventory",
     "start": "nest start gateway",
     "start:dev": "nest start gateway --watch",
+    "start:inventory": "nest start inventory",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -19,8 +20,11 @@
     "format": "prettier --write \"{services,libs}/**/*.ts\""
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.7.15",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
+    "@nestjs/microservices": "^11.1.27",
     "@nestjs/platform-express": "^11.0.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/core": "^2.8.0",
@@ -37,9 +41,9 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@nestjs/cli": "^11.0.0",
-    "@opentelemetry/context-async-hooks": "^2.8.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
+    "@opentelemetry/context-async-hooks": "^2.8.0",
     "@types/jest": "^29.5.12",
     "@types/node": "^20.11.0",
     "@types/supertest": "^6.0.2",

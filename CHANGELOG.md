@@ -7,6 +7,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `services/inventory`: the first downstream saga participant — the inventory
+  source of truth. A NestJS gRPC microservice serves the `Inventory` contract
+  (`Hold`/`Release`, `proto/inventory.proto`) and owns holds plus per-SKU
+  availability. `Hold` is idempotent per booking (a retry returns the standing
+  reservation rather than reserving twice; an over-capacity request is rejected
+  with a reason), and `Release` — the saga compensation — is an idempotent no-op
+  once a hold is already released or absent, so it can fire repeatedly without
+  over-restoring stock. Each state change stages an `inventory.held` /
+  `inventory.released` event through `@signalman/outbox`, and every gRPC handler
+  is wrapped in `@signalman/interceptor`'s SERVER span (the inventory hop of the
+  booking trace) so the staged events continue from it. In-memory hold and
+  outbox stores stand in until the Postgres-backed stores land; the service
+  boots as a standalone gRPC microservice with telemetry started first, verified
+  end to end with a real gRPC client.
+
+### Added — 2026-06-28
 - `libs/inbox`: idempotent inbox — the dedup half of effectively-once delivery.
   `InboxStore.processOnce` is the atomic dedup primitive: it records a per-consumer
   marker in the **same transaction** as the handler's side effects, so a first

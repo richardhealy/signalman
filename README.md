@@ -17,13 +17,15 @@ current status.
 
 ## Status
 
-Early scaffold (milestone **M0**). The monorepo, tooling, CI, the trace-context
-propagation library, the OpenTelemetry bootstrap library, the trace-correlated
-logging library, the observability interceptor (business spans + RED metrics),
-the transactional outbox library (durable staging + trace-aware relay), the
-idempotent inbox library (dedup + trace-continuing consumer), and a gateway
-health endpoint are in place and verified. The remaining services, the
-broker/Postgres/observability stack, and the saga itself are upcoming milestones.
+Foundations plus the first saga participant (milestones **M0 → M1**). The
+monorepo, tooling, CI, the trace-context propagation library, the OpenTelemetry
+bootstrap library, the trace-correlated logging library, the observability
+interceptor (business spans + RED metrics), the transactional outbox library
+(durable staging + trace-aware relay), the idempotent inbox library (dedup +
+trace-continuing consumer), a gateway health endpoint, and the **inventory
+service** — a gRPC source of truth for holds that stages outbox events — are in
+place and verified. The remaining services, the broker/Postgres/observability
+stack, and the coordinating saga are upcoming milestones.
 
 ## Stack
 
@@ -37,7 +39,8 @@ OpenTelemetry JS exporting OTLP to Tempo + Grafana.
 signalman/
   services/
     gateway/        # HTTP entry point; opens a booking's root span (M0: health probe)
-    …               # coordinator, inventory, payments, supplier, ledger, notifier, reconciler (upcoming)
+    inventory/      # gRPC source of truth for holds (Hold/Release) + outbox-staged events
+    …               # coordinator, payments, supplier, ledger, notifier, reconciler (upcoming)
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
@@ -201,6 +204,30 @@ handler throws, modelling an `INSERT … ON CONFLICT DO NOTHING` plus the handle
 writes under one transaction, until the Postgres-backed store lands with the
 services. Pair it with the outbox relay for effectively-once processing.
 
+### `services/inventory`
+
+The first downstream saga participant — the inventory **source of truth**. It
+owns availability and holds, and exposes the saga's synchronous inventory
+commands over gRPC (`proto/inventory.proto`):
+
+- `Hold(bookingId, sku, qty)` reserves stock for a booking. It is **idempotent
+  per booking**: a retried hold returns the standing reservation rather than
+  reserving twice, so the coordinator and broker redeliveries can retry freely.
+  A request that would oversell is rejected with `held = false` and a `reason`.
+- `Release(bookingId)` gives the reservation back — the saga **compensation**.
+  It is idempotent too: releasing an already-released or unknown booking is a
+  successful no-op, so a compensation can fire more than once without
+  over-restoring stock.
+
+Each state change is paired with an outbox event (`inventory.held` /
+`inventory.released`) staged through `@signalman/outbox`, so the rest of the
+system learns what happened without the dual-write problem. Every gRPC handler
+is wrapped by `@signalman/interceptor`'s SERVER span — the inventory hop of the
+booking trace — and the staged events continue from it, so the whole leg hangs
+off one connected trace. The in-memory hold and outbox stores are reference
+implementations; the Postgres-backed stores and the relay that drains events to
+the broker land with the datastore and broker milestones.
+
 ## Getting started
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
@@ -220,6 +247,17 @@ npm start                       # boots the gateway on PORT (default 3000)
 curl http://localhost:3000/health
 # {"status":"ok","service":"gateway"}
 ```
+
+### Run the inventory service
+
+```bash
+npm run start:inventory         # boots the gRPC server on INVENTORY_GRPC_URL
+                                # (default 0.0.0.0:50051)
+```
+
+It registers the `signalman.inventory.v1.Inventory` service; drive it with any
+gRPC client (e.g. `grpcurl`) against `proto/inventory.proto`. Telemetry starts
+before the transport, so spans and RED metrics flow from the first request.
 
 ## Development
 

@@ -19,6 +19,16 @@
         "tsConfigPath": "services/gateway/tsconfig.app.json"
       }
     },
+    "inventory": {
+      "type": "application",
+      "root": "services/inventory",
+      "entryFile": "main",
+      "sourceRoot": "services/inventory/src",
+      "compilerOptions": {
+        "tsConfigPath": "services/inventory/tsconfig.app.json",
+        "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/inventory" }]
+      }
+    },
     "otel": {
       "type": "library",
       "root": "libs/otel",
