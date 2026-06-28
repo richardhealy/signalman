@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+// The coordinator's synchronous command surface — the gRPC contract the gateway
+// calls to make a booking. The coordinator is the saga orchestrator: a single
+// Book call drives the whole booking (hold inventory, authorize payment, confirm
+// with the supplier, capture payment, commit to the ledger) and, on any failure,
+// unwinds the steps that succeeded in reverse. The reply reports either the
+// references the booking produced or the step that failed and whether the
+// compensations ran, so the caller learns the booking's fate without inspecting
+// each downstream service.
+package signalman.coordinator.v1;
+
+service Coordinator {
+  // Drive the booking saga to completion. Idempotency is delegated to the legs:
+  // every downstream command is keyed by `booking_id`, so a retried Book replays
+  // the saga without double-booking. On a mid-saga failure the compensations of
+  // the completed steps fire in reverse before the failure is reported.
+  rpc Book(BookRequest) returns (BookReply);
+}
+
+message BookRequest {
+  // The booking's id; threaded to every leg as the idempotency key.
+  string booking_id = 1;
+  // The stock-keeping unit to book (e.g. a seat class or room-night).
+  string sku = 2;
+  // How many units to book.
+  uint32 qty = 3;
+  // Amount to take, in the currency's minor units (e.g. cents).
+  uint64 amount = 4;
+  // ISO 4217 currency code, e.g. "USD".
+  string currency = 5;
+}
+
+message BookReply {
+  // Whether the booking completed (every leg succeeded).
+  bool booked = 1;
+  // Inventory's hold reference; empty when the booking failed.
+  string hold_id = 2;
+  // The PSP's authorization reference; empty when the booking failed.
+  string authorization_id = 3;
+  // The partner's confirmation reference; empty when the booking failed.
+  string confirmation_id = 4;
+  // The PSP's capture reference; empty when the booking failed.
+  string capture_id = 5;
+  // The ledger entry's id; empty when the booking failed.
+  string entry_id = 6;
+  // The saga step that failed (e.g. "supplier.confirm"); empty when booked.
+  string failed_step = 7;
+  // Machine-readable failure reason carried up from the failed leg (a business
+  // rejection reason like "insufficient_stock", or the error type of an outage);
+  // empty when booked.
+  string reason = 8;
+  // Whether compensations ran to unwind the steps that had completed before the
+  // failure. False on success and when the very first step failed (nothing to
+  // undo).
+  bool compensated = 9;
+}

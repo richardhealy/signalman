@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+// The ledger service's synchronous command surface — the gRPC contract the saga
+// coordinator calls to post a booking's money to the financial record. The
+// ledger owns the record of what actually happened financially; unlike the other
+// legs it wraps no external system, so a commit is an internal posting rather
+// than a request to a slow or flaky boundary. This is how the rest of the system
+// asks it to commit or reverse.
+package signalman.ledger.v1;
+
+service Ledger {
+  // Commit a booking's money to the financial record — the saga's "commit to
+  // ledger" step, posted after payments captures. Idempotent per booking: a retry
+  // returns the standing entry rather than posting twice. A non-positive amount is
+  // rejected with `committed = false` and a `reason`; there is no external hop to
+  // fail, so a rejection is the only non-commit outcome.
+  rpc Commit(CommitRequest) returns (CommitReply);
+
+  // Reverse a booking's ledger entry — the saga compensation. Idempotent:
+  // reversing an already-reversed or unknown booking succeeds without
+  // double-reversing.
+  rpc Reverse(ReverseRequest) returns (ReverseReply);
+}
+
+message CommitRequest {
+  // The booking the entry belongs to; also the idempotency key.
+  string booking_id = 1;
+  // Amount to post, in the currency's minor units (e.g. cents). Must be positive.
+  uint64 amount = 2;
+  // ISO 4217 currency code, e.g. "USD".
+  string currency = 3;
+  // The payment capture reference being recorded, tying the financial record back
+  // to the money payments took. May be empty.
+  string capture_id = 4;
+}
+
+message CommitReply {
+  // Whether the entry was posted.
+  bool committed = 1;
+  // Our ledger entry's id — the truth handle the reconciler matches against the
+  // other sources of truth; empty when `committed = false`.
+  string entry_id = 2;
+  // Machine-readable reason the posting was refused (e.g. "invalid_amount");
+  // empty when `committed = true`.
+  string reason = 3;
+}
+
+message ReverseRequest {
+  // The booking whose ledger entry should be reversed.
+  string booking_id = 1;
+}
+
+message ReverseReply {
+  // Always true once the booking holds no live entry (the desired end state),
+  // whether this call reversed a standing entry or found nothing to do.
+  bool reversed = 1;
+  // The reversed entry's id; empty when there was nothing to reverse.
+  string entry_id = 2;
+}

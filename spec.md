@@ -97,15 +97,15 @@ The propagation path is the point: `gateway` opens a root span and calls `coordi
 
 | # | Milestone | Outcome | Status |
 |---|-----------|---------|--------|
-| M0 | Scaffold | services + Postgres + broker + collector + docker-compose, CI green | ☐ Not started |
-| M1 | Happy-path saga | hold/auth/confirm/commit/notify over gRPC + events | ☐ Not started |
-| M2 | Outbox | transactional outbox + relay, crash test (no lost/phantom) | ☐ Not started |
+| M0 | Scaffold | services + Postgres + broker + collector + docker-compose, CI green | ◐ In progress |
+| M1 | Happy-path saga | hold/auth/confirm/commit/notify over gRPC + events | ◐ In progress |
+| M2 | Outbox | transactional outbox + relay, crash test (no lost/phantom) | ◐ In progress |
 | M3 | Trace propagation | one booking = one trace across sync + async + external hop | ☐ Not started |
-| M4 | Compensations | failure paths unwind, compensations traced | ☐ Not started |
-| M5 | Idempotency | inbox dedup, redelivery-safe consumers | ☐ Not started |
+| M4 | Compensations | failure paths unwind, compensations traced | ◐ In progress |
+| M5 | Idempotency | inbox dedup, redelivery-safe consumers | ◐ In progress |
 | M6 | Reconciler | compares sources of truth, divergence findings linked to traces | ☐ Not started |
-| M7 | Metrics + logs | RED + per-step SLOs in Grafana, trace-correlated logs | ☐ Not started |
-| M8 | Harden + ship | supplier failure injection, README trace screenshot, release | ☐ Not started |
+| M7 | Metrics + logs | RED + per-step SLOs in Grafana, trace-correlated logs | ◐ In progress |
+| M8 | Harden + ship | supplier failure injection, README trace screenshot, release | ◐ In progress |
 
 Status legend: ☐ Not started, ◐ In progress, ☑ Done, ⊘ Blocked.
 

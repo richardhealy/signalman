@@ -42,7 +42,15 @@ concrete slices needed to call it done.
     as a JS number at the boundary (`loader: { longs: Number }`) so posted amounts
     and event payloads are plain numbers; boots as a standalone gRPC microservice
     and verified end to end with a real client
-  - ☐ `coordinator`, `notifier`, `reconciler`
+  - ☑ `coordinator` — the saga orchestrator. Serves `Coordinator.Book` over
+    NestJS gRPC microservices; a single `Book` drives `inventory.hold →
+    payments.authorize → supplier.confirm → payments.capture → ledger.commit`
+    through four gRPC leg-client ports and unwinds the completed steps in reverse
+    on any failure (rejection or outage). Every step and compensation is its own
+    span under the `Book` SERVER span; the orchestrator depends only on the leg
+    ports so it is unit-tested against in-memory fakes, and the whole booking is
+    verified end to end against all four live leg services over gRPC
+  - ☐ `notifier`, `reconciler`
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
@@ -54,11 +62,14 @@ concrete slices needed to call it done.
 
 ### M1 — Happy-path saga ◐
 
-- ◐ gRPC contracts for the synchronous commands — `inventory.proto`
-  (`Hold`/`Release`), `payments.proto` (`Authorize`/`Capture`/`Void`),
-  `supplier.proto` (`Confirm`/`Cancel`), and `ledger.proto` (`Commit`/`Reverse`)
-  defined and served; the notifier contract upcoming
-- ☐ Coordinator drives `hold → authorize → confirm → capture/commit → notify`
+- ◐ gRPC contracts for the synchronous commands — `coordinator.proto` (`Book`),
+  `inventory.proto` (`Hold`/`Release`), `payments.proto`
+  (`Authorize`/`Capture`/`Void`), `supplier.proto` (`Confirm`/`Cancel`), and
+  `ledger.proto` (`Commit`/`Reverse`) defined and served; the notifier contract
+  upcoming
+- ◐ Coordinator drives `hold → authorize → confirm → capture → commit` over gRPC
+  (verified end to end against the four live leg services); the async `notify`
+  step lands with the notifier and broker
 - ◐ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
   partner confirmations, wrapping a simulated external partner; ledger owns the
@@ -83,10 +94,16 @@ concrete slices needed to call it done.
 - ☐ Span links for fan-out (one event, many consumers)
 - ☐ Spans align to OTel RPC + messaging semantic conventions
 
-### M4 — Compensations ☐
+### M4 — Compensations ◐
 
-- ☐ Failure paths unwind in reverse (release hold, void authorization)
-- ☐ Compensations visible as spans
+- ◐ Failure paths unwind in reverse — the coordinator saga runs the completed
+  steps' compensations in reverse (`supplier.cancel → payments.void →
+  inventory.release`) on any rejection or outage, best-effort over the idempotent
+  leg compensations; unit-tested for every failure position and verified end to
+  end. The forced-mid-saga demo across a fully wired trace lands with M3
+- ◐ Compensations visible as spans — each compensation runs in its own
+  compensation-flagged span under the `Book` SERVER span; folding the legs' own
+  spans into the same cross-service trace lands with M3
 
 ### M5 — Idempotency ◐
 

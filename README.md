@@ -17,20 +17,23 @@ current status.
 
 ## Status
 
-Foundations plus the first three saga participants (milestones **M0 → M1**). The
-monorepo, tooling, CI, the trace-context propagation library, the OpenTelemetry
-bootstrap library, the trace-correlated logging library, the observability
-interceptor (business spans + RED metrics), the transactional outbox library
-(durable staging + trace-aware relay), the idempotent inbox library (dedup +
-trace-continuing consumer), a gateway health endpoint, the **inventory
-service** — a gRPC source of truth for holds — the **payments service** — a
-gRPC source of truth for authorizations/captures wrapping a simulated PSP — the
-**supplier service** — a gRPC source of truth for partner confirmations
-wrapping a simulated, deliberately slow-and-flaky external partner — and the
-**ledger service** — the internal gRPC source of truth for the financial record
-(Commit/Reverse) — are in place and verified, all four staging outbox events.
-The remaining services, the broker/Postgres/observability stack, and the
-coordinating saga are upcoming milestones.
+Foundations, the four saga participants, and the coordinating saga (milestones
+**M0 → M1**, with M4 compensations in shape). The monorepo, tooling, CI, the
+trace-context propagation library, the OpenTelemetry bootstrap library, the
+trace-correlated logging library, the observability interceptor (business spans +
+RED metrics), the transactional outbox library (durable staging + trace-aware
+relay), the idempotent inbox library (dedup + trace-continuing consumer), a
+gateway health endpoint, the **inventory service** — a gRPC source of truth for
+holds — the **payments service** — a gRPC source of truth for
+authorizations/captures wrapping a simulated PSP — the **supplier service** — a
+gRPC source of truth for partner confirmations wrapping a simulated, deliberately
+slow-and-flaky external partner — the **ledger service** — the internal gRPC
+source of truth for the financial record (Commit/Reverse) — and the
+**coordinator service** — the saga orchestrator that drives a booking across all
+four legs over gRPC and unwinds the completed steps in reverse on any failure —
+are in place and verified end to end. The remaining services (notifier,
+reconciler), the broker/Postgres/observability stack, and cross-service trace
+propagation are upcoming milestones.
 
 ## Stack
 
@@ -44,11 +47,12 @@ OpenTelemetry JS exporting OTLP to Tempo + Grafana.
 signalman/
   services/
     gateway/        # HTTP entry point; opens a booking's root span (M0: health probe)
+    coordinator/    # saga orchestrator: drives the booking over gRPC + compensations (Book)
     inventory/      # gRPC source of truth for holds (Hold/Release) + outbox-staged events
     payments/       # gRPC source of truth for payments (Authorize/Capture/Void), wraps a simulated PSP
     supplier/       # gRPC source of truth for partner confirmations (Confirm/Cancel), wraps a simulated partner
     ledger/         # internal gRPC source of truth for the financial record (Commit/Reverse) + outbox-staged events
-    …               # coordinator, notifier, reconciler (upcoming)
+    …               # notifier, reconciler (upcoming)
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
@@ -320,6 +324,38 @@ Each state change is paired with an outbox event (`ledger.committed` /
 outbox stores are reference implementations; the Postgres-backed stores and the
 broker relay land with later milestones.
 
+### `services/coordinator`
+
+The **saga orchestrator** — the coordinating heart of the system. It exposes one
+synchronous command over gRPC (`proto/coordinator.proto`):
+
+- `Book(bookingId, sku, qty, amount, currency)` drives the booking through five
+  legs in order — `inventory.hold → payments.authorize → supplier.confirm →
+  payments.capture → ledger.commit` — and returns either every leg's truth handle
+  (hold/authorization/confirmation/capture/entry id) or the step that stopped the
+  saga, its reason, and whether the completed steps were unwound.
+
+The moment a leg **refuses** (a business "no", returned as data) or **fails** (an
+outage, a thrown error) the saga unwinds the steps that already succeeded by
+running their **compensations in reverse**: `supplier.cancel → payments.void →
+inventory.release`. Each leg's compensation is idempotent, so the unwind is safe
+to retry and a partial unwind still completes — a compensation that throws is
+recorded and the rest still run. Idempotency is delegated to the legs (every
+downstream command is keyed by `booking_id`), so a retried `Book` replays the
+saga without double-booking.
+
+Observability is the point, so the saga makes its shape visible: every forward
+step and every compensation runs inside its own span, parented to the `Book`
+SERVER span the interceptor opens — a rejection annotates its span with the
+outcome and reason, an outage marks it errored, and a compensation span is
+flagged so the unwind is legible at a glance. The orchestrator depends only on
+four leg **ports**, so it is unit-tested end to end against in-memory fakes; in
+production those ports are gRPC client adapters dialling the real services
+(`INVENTORY_GRPC_URL`, `PAYMENTS_GRPC_URL`, `SUPPLIER_GRPC_URL`,
+`LEDGER_GRPC_URL`). The cross-service CLIENT spans and `traceparent` propagation
+that fold the legs' own spans into this one trace land with the trace-propagation
+milestone.
+
 ## Getting started
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
@@ -386,6 +422,40 @@ It registers the `signalman.ledger.v1.Ledger` service; drive it with any gRPC
 client (e.g. `grpcurl`) against `proto/ledger.proto`. The ledger has no external
 boundary to tune — a `Commit` with a positive amount always posts; a non-positive
 amount is rejected as `invalid_amount`.
+
+### Run the coordinator service
+
+The coordinator is a gRPC **client** of the four legs and a gRPC **server** for
+the gateway, so a booking needs all five processes up. In separate terminals
+(disabling the simulated failures for a deterministic happy path):
+
+```bash
+PSP_DECLINE_RATE=0 PSP_FAILURE_RATE=0 npm run start:payments
+SUPPLIER_REJECT_RATE=0 SUPPLIER_FAILURE_RATE=0 npm run start:supplier
+npm run start:inventory
+npm run start:ledger
+npm run start:coordinator       # boots the gRPC server on COORDINATOR_GRPC_URL
+                                # (default 0.0.0.0:50050)
+```
+
+It registers the `signalman.coordinator.v1.Coordinator` service. Drive a booking
+with any gRPC client against `proto/coordinator.proto`:
+
+```bash
+grpcurl -plaintext -import-path services/coordinator/src/proto -proto coordinator.proto \
+  -d '{"bookingId":"bk_1","sku":"seat-economy","qty":2,"amount":4200,"currency":"USD"}' \
+  localhost:50050 signalman.coordinator.v1.Coordinator/Book
+# { "booked": true, "holdId": "…", "authorizationId": "…", "confirmationId": "…",
+#   "captureId": "…", "entryId": "…" }
+```
+
+A request that would oversell (`"qty": 1000000`) comes back
+`{"booked": false, "failedStep": "inventory.hold", "reason": "insufficient_stock"}`
+with nothing to compensate; a failure deeper in the saga returns
+`compensated: true` after the completed legs unwind in reverse. Each leg's dial
+address is overridable via `INVENTORY_GRPC_URL`, `PAYMENTS_GRPC_URL`,
+`SUPPLIER_GRPC_URL`, and `LEDGER_GRPC_URL` so docker-compose can address services
+by name.
 
 ## Development
 

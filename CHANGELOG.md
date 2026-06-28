@@ -7,6 +7,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `services/coordinator`: the saga orchestrator — the coordinating heart of the
+  system, and the happy-path booking end to end (M1). A NestJS gRPC microservice
+  serves the `Coordinator` contract (`Book`, `proto/coordinator.proto`); a single
+  `Book` drives the booking through five legs in order — `inventory.hold →
+  payments.authorize → supplier.confirm → payments.capture → ledger.commit` — and
+  returns either every leg's truth handle or the step that stopped the saga, its
+  reason, and whether the completed steps were unwound. On any **rejection** (a
+  leg's business "no", returned as data) or **outage** (a thrown error) the saga
+  runs the completed steps' **compensations in reverse** (`supplier.cancel →
+  payments.void → inventory.release`), best-effort over the idempotent leg
+  compensations so a partial unwind still completes (M4 in shape). Idempotency is
+  delegated to the legs (every downstream command is keyed by `booking_id`), so a
+  retried `Book` replays the saga without double-booking. Every forward step and
+  compensation runs in its own span under the `Book` SERVER span — a rejection
+  annotates its span with the outcome and reason, an outage marks it errored, and
+  a compensation span is flagged. The orchestrator depends only on four leg
+  **ports**, so it is unit-tested against in-memory fakes; in production those
+  ports are gRPC client adapters dialling the real services (`INVENTORY_GRPC_URL`,
+  `PAYMENTS_GRPC_URL`, `SUPPLIER_GRPC_URL`, `LEDGER_GRPC_URL`). The service boots
+  as a standalone gRPC microservice with telemetry started first, and the whole
+  booking — happy path and a first-step rejection — is verified end to end against
+  all four live leg services over gRPC.
 - `services/ledger`: the fourth saga participant — the financial-record source of
   truth, the `capture + commit to ledger` leg of the booking saga. A NestJS gRPC
   microservice serves the `Ledger` contract (`Commit`/`Reverse`,

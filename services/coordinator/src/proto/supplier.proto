@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+// The supplier service's synchronous command surface — the gRPC contract the
+// saga coordinator calls to confirm a booking with the external partner.
+// Supplier confirms reservations with a partner whose confirmation reference is
+// a source of truth outside our boundary (deliberately slow and flaky in the
+// simulator, because that is where divergence is born). This is how the rest of
+// the system asks it to confirm or cancel.
+package signalman.supplier.v1;
+
+service Supplier {
+  // Confirm a booking with the external partner. Idempotent per booking: a retry
+  // returns the standing confirmation rather than confirming twice. A partner
+  // rejection is reported with `confirmed = false` and a `reason`; a partner
+  // outage surfaces as a gRPC error (the external hop is observable in the
+  // trace), not a rejection.
+  rpc Confirm(ConfirmRequest) returns (ConfirmReply);
+
+  // Cancel a booking's confirmation — the saga compensation. Idempotent:
+  // cancelling an already-cancelled or unknown booking succeeds without
+  // double-cancelling.
+  rpc Cancel(CancelRequest) returns (CancelReply);
+}
+
+message ConfirmRequest {
+  // The booking the confirmation belongs to; also the idempotency key.
+  string booking_id = 1;
+  // The stock-keeping unit being confirmed (e.g. a seat class or room-night),
+  // mirroring what inventory held for the booking.
+  string sku = 2;
+  // How many units to confirm.
+  uint32 qty = 3;
+}
+
+message ConfirmReply {
+  // Whether the partner confirmed the booking.
+  bool confirmed = 1;
+  // The partner's confirmation reference — the external truth handle the
+  // reconciler matches against the other sources of truth; empty when
+  // `confirmed = false`.
+  string confirmation_id = 2;
+  // Machine-readable rejection reason (e.g. "no_availability"); empty when
+  // `confirmed = true`.
+  string reason = 3;
+}
+
+message CancelRequest {
+  // The booking whose confirmation should be cancelled.
+  string booking_id = 1;
+}
+
+message CancelReply {
+  // Always true once the booking holds no live confirmation (the desired end
+  // state), whether this call cancelled a standing confirmation or found nothing
+  // to do.
+  bool cancelled = 1;
+  // The cancelled partner confirmation reference; empty when there was nothing
+  // to cancel.
+  string confirmation_id = 2;
+}

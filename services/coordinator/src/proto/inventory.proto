@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+// The inventory service's synchronous command surface — the gRPC contract the
+// saga coordinator calls to reserve and release inventory. Inventory owns
+// availability and holds; this is how the rest of the system asks it to act.
+package signalman.inventory.v1;
+
+service Inventory {
+  // Reserve `qty` of `sku` for a booking. Idempotent per booking: a retry
+  // returns the standing hold rather than reserving twice. A request that would
+  // oversell is rejected with `held = false` and a `reason`.
+  rpc Hold(HoldRequest) returns (HoldReply);
+
+  // Release a booking's hold — the saga compensation. Idempotent: releasing an
+  // already-released or unknown booking succeeds without over-restoring stock.
+  rpc Release(ReleaseRequest) returns (ReleaseReply);
+}
+
+message HoldRequest {
+  // The booking the reservation belongs to; also the idempotency key.
+  string booking_id = 1;
+  // The stock-keeping unit to reserve (e.g. a seat class or room-night).
+  string sku = 2;
+  // How many units to reserve.
+  uint32 qty = 3;
+}
+
+message HoldReply {
+  // Whether the reservation was granted.
+  bool held = 1;
+  // The hold's id; empty when `held = false`.
+  string hold_id = 2;
+  // Machine-readable rejection reason (e.g. "insufficient_stock"); empty when
+  // `held = true`.
+  string reason = 3;
+  // Units of `sku` remaining available after the operation.
+  uint32 available = 4;
+}
+
+message ReleaseRequest {
+  // The booking whose hold should be released.
+  string booking_id = 1;
+}
+
+message ReleaseReply {
+  // Always true once the booking holds no inventory (the desired end state),
+  // whether this call released a standing hold or found nothing to do.
+  bool released = 1;
+  // The released hold's id; empty when there was nothing to release.
+  string hold_id = 2;
+}

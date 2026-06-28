@@ -19,6 +19,16 @@
         "tsConfigPath": "services/gateway/tsconfig.app.json"
       }
     },
+    "coordinator": {
+      "type": "application",
+      "root": "services/coordinator",
+      "entryFile": "main",
+      "sourceRoot": "services/coordinator/src",
+      "compilerOptions": {
+        "tsConfigPath": "services/coordinator/tsconfig.app.json",
+        "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/coordinator" }]
+      }
+    },
     "inventory": {
       "type": "application",
       "root": "services/inventory",

@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+// The payments service's synchronous command surface — the gRPC contract the
+// saga coordinator calls to take money for a booking. Payments owns
+// authorizations and captures, wrapping an external PSP whose authorization and
+// capture references are a source of truth outside our boundary. This is how the
+// rest of the system asks it to authorize, capture, or void.
+package signalman.payments.v1;
+
+service Payments {
+  // Authorize `amount` against the customer's method of payment for a booking.
+  // Idempotent per booking: a retry returns the standing authorization rather
+  // than authorizing twice. A PSP decline is reported with `authorized = false`
+  // and a `reason`; a PSP outage surfaces as a gRPC error (the external hop is
+  // observable in the trace), not a decline.
+  rpc Authorize(AuthorizeRequest) returns (AuthorizeReply);
+
+  // Capture a previously authorized payment — the saga's money-taking step.
+  // Idempotent per booking: a retry returns the standing capture.
+  rpc Capture(CaptureRequest) returns (CaptureReply);
+
+  // Void a booking's authorization — the saga compensation. Idempotent:
+  // voiding an already-voided or unknown booking succeeds without double-voiding.
+  rpc Void(VoidRequest) returns (VoidReply);
+}
+
+message AuthorizeRequest {
+  // The booking the payment belongs to; also the idempotency key.
+  string booking_id = 1;
+  // Amount to authorize, in the currency's minor units (e.g. cents).
+  uint64 amount = 2;
+  // ISO 4217 currency code, e.g. "USD".
+  string currency = 3;
+}
+
+message AuthorizeReply {
+  // Whether the authorization was granted by the PSP.
+  bool authorized = 1;
+  // Our payment record's id; empty when `authorized = false`.
+  string payment_id = 2;
+  // The PSP's authorization reference (the external truth handle); empty when
+  // `authorized = false`.
+  string authorization_id = 3;
+  // Machine-readable decline reason (e.g. "card_declined"); empty when
+  // `authorized = true`.
+  string reason = 4;
+}
+
+message CaptureRequest {
+  // The booking whose authorization should be captured.
+  string booking_id = 1;
+}
+
+message CaptureReply {
+  // Whether the capture succeeded.
+  bool captured = 1;
+  // Our payment record's id; empty when `captured = false`.
+  string payment_id = 2;
+  // The PSP's capture reference; empty when `captured = false`.
+  string capture_id = 3;
+  // Machine-readable reason the capture could not proceed (e.g.
+  // "no_authorization", "authorization_voided"); empty when `captured = true`.
+  string reason = 4;
+}
+
+message VoidRequest {
+  // The booking whose authorization should be voided.
+  string booking_id = 1;
+}
+
+message VoidReply {
+  // Always true once the booking holds no live authorization (the desired end
+  // state), whether this call voided a standing authorization or found nothing
+  // to do.
+  bool voided = 1;
+  // The voided payment record's id; empty when there was nothing to void.
+  string payment_id = 2;
+}
