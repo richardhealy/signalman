@@ -7,6 +7,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- `libs/broker`: the **NATS JetStream adapter** (`NatsBroker`) — the first *real*
+  transport behind the `MessageBroker` boundary, the production sibling of the
+  in-memory reference, and the start of M0's "broker transport" work. It maps the
+  reference semantics onto JetStream primitives so a service swaps it in behind
+  the same DI token: a publish lands in a durable **stream** (the event survives a
+  broker restart, the durability the outbox assumes on the other side); subject
+  matching is JetStream's own NATS wildcards; **fan-out** is an *ephemeral* push
+  consumer per subscriber (each gets its own copy) while a **queue group** is a
+  shared *durable* consumer its members load-balance; and delivery is
+  **at-least-once** — the handler resolving `ack()`s, throwing `nak()`s for
+  redelivery up to `maxDeliver`, after which the message is `term()`-inated and
+  surfaced to `onDeadLetter`, the same attempt budget and dead-letter seam the
+  reference models. A pure header codec (`encodeNatsHeaders`/`decodeNatsHeaders`)
+  round-trips the trace-carrying `BrokerHeaders` and the message id across the
+  wire (stripping NATS- and adapter-internal headers from the consumer's view),
+  so the booking trace continues through the broker. `NatsBroker.create` adapts an
+  existing connection; `NatsBroker.connect` owns one and provisions the stream
+  idempotently; `whenReady()` closes the subscribe start-up race; `close()` drains
+  and tears down. Verified **end to end against a live JetStream server** by a
+  gated integration test (`nats-broker.integration.spec.ts` — runs only with
+  `NATS_TEST_URL` set, skipped by the default `npm test` and in CI so the suite
+  stays green without a broker): fan-out, queue-group load-balancing, NACK
+  redelivery, dead-letter after `maxDeliver`, and **the spec's headline async
+  half** — a staged outbox event drained by the relay through JetStream and
+  consumed by the idempotent inbox keeps the saga step → PRODUCER publish →
+  CONSUMER consume spans on **one connected trace**, now with NATS in the middle
+  rather than the in-memory broker. The pure header codec and durable-name
+  derivation carry unit coverage in the default suite.
 - `libs/broker`: the broker boundary that **closes the async-event hop** — the
   transport between the transactional outbox and the idempotent inbox, and the
   async half of the headline "one booking = one trace" (M3). `MessageBroker` is

@@ -98,9 +98,21 @@ concrete slices needed to call it done.
     outbox → relay → broker → inbox and asserts the three hops form one connected
     trace; the NATS-backed adapter swaps in behind the same boundary with the
     docker stack
-- ☐ Postgres per service, broker **transport** (NATS JetStream/Kafka adapter
-  behind `libs/broker`'s `MessageBroker`; the boundary + in-memory reference are
-  built), OTel Collector
+- ◐ Broker **transport** — the **NATS JetStream adapter** (`NatsBroker`) is built
+  behind `libs/broker`'s `MessageBroker` boundary, the production sibling of the
+  in-memory reference. It maps the reference semantics onto JetStream: a durable
+  stream, native subject-wildcard matching, fan-out via an ephemeral push
+  consumer per subscriber, queue-group load-balancing via a shared durable
+  consumer, and at-least-once delivery with `nak()` redelivery up to `maxDeliver`
+  then `term()` + dead-letter. A header codec round-trips the trace-carrying
+  `BrokerHeaders` (and the message id) across the wire. Verified end to end
+  against a **live JetStream server** by a gated integration test
+  (`nats-broker.integration.spec.ts`, run with `NATS_TEST_URL` set; skipped by
+  default so CI stays green) — fan-out, queue groups, redelivery, dead-letter,
+  **and the headline async trace continuity** (saga step → JetStream publish →
+  consume on one connected trace). Per-service relay/subscription wiring (choosing
+  the broker via env) lands next
+- ☐ Postgres per service, OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
 ### M1 — Happy-path saga ◐
@@ -153,9 +165,11 @@ concrete slices needed to call it done.
   (`libs/broker/src/trace-continuity.spec.ts`) asserts the saga step → publish
   (PRODUCER) → consume (CONSUMER) spans share one `traceId` with the right
   lineage (publish parented to the step, consume parented to publish) — the
-  async half of the headline, proven over the in-memory broker. The NATS-backed
-  transport swaps in behind the same boundary with the docker stack; the
-  external supplier/PSP CLIENT hops are already span-shaped within their legs
+  async half of the headline. This is now also proven over the **real NATS
+  JetStream transport** (`nats-broker.integration.spec.ts`), not just the
+  in-memory reference: with `NatsBroker` in the middle the same three spans still
+  form one connected trace. The external supplier/PSP CLIENT hops are already
+  span-shaped within their legs
 - ◐ Span links for fan-out (one event, many consumers) — the broker delivers
   fan-out (every matching subscription gets a copy; queue groups load-balance),
   so the substrate exists; emitting `span links` on the fan-out consume spans

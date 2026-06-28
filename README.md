@@ -44,10 +44,14 @@ same booking trace instead of orphaning. Asynchronous: the new
 **`@signalman/broker`** library — the `MessageBroker` boundary plus an in-memory
 reference — closes the outbox → broker → inbox hop, with an end-to-end test
 proving the saga step, the relay's PRODUCER publish span, and the inbox's
-CONSUMER consume span share one connected trace. The NATS-backed broker
-transport, Postgres per service, and the OTel Collector/Tempo/Grafana stack —
-which fold these in-process proofs onto real infrastructure — are the upcoming
-milestones.
+CONSUMER consume span share one connected trace. The **first real transport** is
+now in place too: a **NATS JetStream adapter** (`NatsBroker`) implements the same
+`MessageBroker` boundary and is verified end to end against a live JetStream
+server — fan-out, queue-group load-balancing, at-least-once redelivery,
+dead-lettering, and the headline async trace continuity all hold with NATS in the
+middle. Postgres per service and the OTel Collector/Tempo/Grafana stack — which
+fold these in-process proofs onto the rest of the real infrastructure — and the
+per-service broker wiring are the upcoming milestones.
 
 ## Stack
 
@@ -288,6 +292,56 @@ Wired this way, a staged event's saga-step span, the relay's PRODUCER publish
 span, and the inbox's CONSUMER consume span all hang off **one connected booking
 trace** — the async half of "one booking = one trace", proven end to end in
 [`libs/broker/src/trace-continuity.spec.ts`](libs/broker/src/trace-continuity.spec.ts).
+
+#### NATS JetStream transport (`NatsBroker`)
+
+`InMemoryBroker` is the reference; **`NatsBroker`** is the first *real* transport
+behind the same `MessageBroker` boundary, so a service swaps it in without
+touching the relay or its consumers:
+
+```ts
+import { NatsBroker, BrokerPublisher, toConsumedMessage } from '@signalman/broker';
+
+// Connects, owns the connection, and provisions the durable stream.
+const broker = await NatsBroker.connect({ connection: { servers: 'nats://localhost:4222' } });
+
+const relay = new OutboxRelay({ store, publisher: new BrokerPublisher(broker), messagingSystem: 'nats' });
+relay.start(250);
+
+broker.subscribe('ledger.committed', (message) =>
+  consumer.consume(toConsumedMessage(message), () => notifyCustomer(message)).then(() => undefined),
+);
+// await broker.close() on shutdown
+```
+
+It maps the reference semantics onto JetStream primitives. A publish lands in a
+durable **stream** (the event survives a broker restart — the durability the
+outbox assumes). Subject matching is JetStream's own NATS wildcards. **Fan-out**
+is an *ephemeral* push consumer per subscriber (each gets its own copy); a
+**queue group** is a shared *durable* consumer whose members load-balance the
+subject. Delivery is **at-least-once**: the handler resolving `ack()`s the
+message, throwing `nak()`s it for redelivery up to `maxDeliver` attempts, after
+which it is `term()`-inated and surfaced to `onDeadLetter` — the same attempt
+budget and dead-letter seam the reference models. The trace-carrying headers (and
+the message id) round-trip across the wire, so the booking trace continues
+through the broker.
+
+`NatsBroker.create(connection, opts)` adapts a connection the caller owns;
+`NatsBroker.connect(opts)` owns one and provisions the stream; `whenReady()`
+awaits subscription establishment (closing the subscribe start-up race before the
+first publish), and `close()` drains and tears down. The adapter is verified end
+to end against a **live JetStream server** by a gated integration test
+([`nats-broker.integration.spec.ts`](libs/broker/src/nats-broker.integration.spec.ts)),
+which the default `npm test` skips so CI stays green without a broker:
+
+```bash
+nats-server -js                        # or: docker run --rm -p 4222:4222 nats -js
+NATS_TEST_URL=nats://localhost:4222 npm test -- nats-broker.integration
+```
+
+It exercises fan-out, queue-group load-balancing, NACK redelivery, dead-lettering,
+and the spec's headline async half — the saga step → JetStream publish → consume
+spans on **one connected trace**, now with NATS in the middle.
 
 ### `services/inventory`
 

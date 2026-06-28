@@ -12,3 +12,17 @@ export {
 } from './memory-broker';
 export { BrokerPublisher, toBrokerMessage } from './outbox-publisher';
 export { toConsumedMessage } from './bridge';
+export {
+  decodeNatsHeaders,
+  encodeNatsHeaders,
+  MESSAGE_ID_HEADER,
+} from './nats-headers';
+export {
+  DEFAULT_ACK_WAIT_MS,
+  DEFAULT_STREAM_NAME,
+  DEFAULT_STREAM_SUBJECTS,
+  deliverSubject,
+  durableName,
+  NatsBroker,
+  type NatsBrokerOptions,
+} from './nats-broker';
