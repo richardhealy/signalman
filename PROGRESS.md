@@ -20,7 +20,8 @@ concrete slices needed to call it done.
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
-- ☐ Remaining libs scaffolded: `outbox`, `inbox`
+- ◐ Remaining libs scaffolded: `outbox` ☑, `inbox` ☐
+  - ☑ `libs/outbox` — transactional outbox: durable record + trace capture (`createOutboxRecord`), `OutboxStore` contract, `InMemoryOutboxStore` reference (leasing, back-off, dead-letter), and a `OutboxRelay` that publishes each row under a PRODUCER span parented to the staged trace (at-least-once, capped exponential back-off, dead-lettering)
 - ☐ Postgres per service, broker (NATS JetStream/Kafka), OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
@@ -30,9 +31,12 @@ concrete slices needed to call it done.
 - ☐ Coordinator drives `hold → authorize → confirm → capture/commit → notify`
 - ☐ Per-service state in Postgres
 
-### M2 — Outbox ☐
+### M2 — Outbox ◐
 
-- ☐ Transactional outbox table + relay per service
+- ◐ Transactional outbox table + relay per service — reusable `libs/outbox`
+  (record staging, store contract, trace-aware relay) is built and unit-tested;
+  the Postgres-backed `OutboxStore` and per-service relay wiring land with the
+  services
 - ☐ Crash test: no lost and no phantom events
 
 ### M3 — Trace propagation ☐

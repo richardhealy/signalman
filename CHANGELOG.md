@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-28
+- `libs/outbox`: transactional outbox. `createOutboxRecord` stages an event into
+  a durable record, capturing the active trace context into its headers, so a
+  service can write its state and its outbox row in one local transaction and
+  defeat the dual-write problem (no lost or phantom events). `OutboxStore` is the
+  broker- and database-agnostic persistence contract; `InMemoryOutboxStore` is a
+  reference implementation modelling leasing, back-off rescheduling, and
+  dead-lettering. `OutboxRelay` drains the store and publishes each row under a
+  PRODUCER span parented to the staged trace — re-injecting that span's context
+  into the outgoing headers — so the saga step, publish hop, and consume span
+  form one connected booking trace. Delivery is at-least-once (claim leasing with
+  crash recovery) with capped exponential back-off, dead-lettering after a
+  configurable attempt budget, and an overlap-safe polling scheduler.
+
+### Added — 2026-06-28
 - `libs/interceptor`: NestJS observability interceptor. Wraps every inbound
   handler in a SERVER span made active for the call (so child spans join the
   trace) and records RED metrics — a `signalman.operation.duration` histogram

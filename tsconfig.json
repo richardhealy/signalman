@@ -27,7 +27,9 @@
       "@signalman/logging": ["libs/logging/src"],
       "@signalman/logging/*": ["libs/logging/src/*"],
       "@signalman/interceptor": ["libs/interceptor/src"],
-      "@signalman/interceptor/*": ["libs/interceptor/src/*"]
+      "@signalman/interceptor/*": ["libs/interceptor/src/*"],
+      "@signalman/outbox": ["libs/outbox/src"],
+      "@signalman/outbox/*": ["libs/outbox/src/*"]
     }
   }
 }

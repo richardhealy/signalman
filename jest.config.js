@@ -14,5 +14,6 @@ module.exports = {
     '^@signalman/propagation(|/.*)$': '<rootDir>/libs/propagation/src/$1',
     '^@signalman/logging(|/.*)$': '<rootDir>/libs/logging/src/$1',
     '^@signalman/interceptor(|/.*)$': '<rootDir>/libs/interceptor/src/$1',
+    '^@signalman/outbox(|/.*)$': '<rootDir>/libs/outbox/src/$1',
   },
 };
