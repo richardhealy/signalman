@@ -13,12 +13,22 @@
  */
 import { type OutboxRecord } from './record';
 import { type ClaimOptions, type MarkFailedOptions, type OutboxStore } from './store';
+import { type UnitOfWork } from './transaction';
 
 export class InMemoryOutboxStore implements OutboxStore {
   private readonly records = new Map<string, OutboxRecord>();
 
-  async add(record: OutboxRecord): Promise<void> {
-    this.records.set(record.id, { ...record });
+  async add(record: OutboxRecord, tx?: UnitOfWork): Promise<void> {
+    // The insert itself is a single map write. Enlisted in a unit of work it is
+    // deferred to commit so it lands atomically with the business-state change;
+    // without one it applies immediately (the relay still delivers it, but the
+    // dual-write window the caller chose not to close is back).
+    const write = (): void => void this.records.set(record.id, { ...record });
+    if (tx) {
+      tx.defer(write);
+    } else {
+      write();
+    }
   }
 
   async claimBatch({ batchSize, now, leaseMs }: ClaimOptions): Promise<OutboxRecord[]> {

@@ -8,6 +8,7 @@
  * tests can run against {@link InMemoryOutboxStore} without a live datastore.
  */
 import { type OutboxRecord } from './record';
+import { type UnitOfWork } from './transaction';
 
 /** Inputs for {@link OutboxStore.claimBatch}. */
 export interface ClaimOptions {
@@ -50,12 +51,14 @@ export interface MarkFailedOptions {
  */
 export interface OutboxStore {
   /**
-   * Persist a freshly staged record. In a real implementation this runs inside
-   * the **same transaction** as the business state change it accompanies — that
-   * shared commit is what makes the outbox transactional and defeats the
-   * dual-write problem.
+   * Persist a freshly staged record. Pass the {@link UnitOfWork} of the
+   * surrounding {@link runInTransaction} so the row commits inside the **same
+   * transaction** as the business state change it accompanies — that shared
+   * commit is what makes the outbox transactional and defeats the dual-write
+   * problem. Called without a unit of work the record is persisted immediately:
+   * the relay still delivers it at-least-once, but the dual-write window is back.
    */
-  add(record: OutboxRecord): Promise<void>;
+  add(record: OutboxRecord, tx?: UnitOfWork): Promise<void>;
 
   /**
    * Atomically claim up to `batchSize` due `pending` records (oldest first),

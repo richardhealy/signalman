@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- `@signalman/outbox`: **transactional staging** — the "transactional" in
+  transactional outbox. `runInTransaction` threads a `UnitOfWork` through a
+  service's business-state write and the outbox `add` it accompanies so the two
+  **commit together or not at all**, closing the dual-write window in the
+  in-memory reference rather than deferring it to "Postgres later":
+  `InMemoryOutboxStore.add(record, tx?)` and the `OutboxStore` contract now take
+  the unit of work, and the **ledger** leg is the first adopter (its
+  `commit`/`reverse` paths wrap the entry write and its event in one
+  transaction). Proven under crash (`durability.spec.ts`, M2 / definition-of-done
+  #3): a staging transaction that rolls back leaves **no outbox row** so no
+  phantom event publishes; a committed row is still published when the relay
+  **crashes mid-publish** (the lease expires and a restarted relay re-claims it)
+  so **no event is lost**; and a crash **between the broker accepting an event
+  and the relay recording it** re-delivers rather than drops — the at-least-once
+  duplicate the idempotent inbox absorbs.
 - `services/gateway`: the public **HTTP entry point** — where a booking, and its
   trace, begins. The gateway was a bare health probe; it now serves the booking
   surface the spec calls for. `POST /bookings` validates the request, mints a

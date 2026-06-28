@@ -166,24 +166,31 @@ service crashes between commit and publish, and no phantom events from a publish
 whose transaction later rolled back.
 
 `createOutboxRecord` stages an event, capturing the active trace context into its
-headers; the service hands the row to its `OutboxStore` inside the same
-transaction as the state change:
+headers; `runInTransaction` threads a `UnitOfWork` through the business-state
+write and the outbox `add` so the two **commit together or not at all** — the
+"transactional" in transactional outbox, which the in-memory reference models
+(not just "in Postgres later"):
 
 ```ts
-import { createOutboxRecord } from '@signalman/outbox';
+import { createOutboxRecord, runInTransaction } from '@signalman/outbox';
 
-await db.transaction(async (tx) => {
-  await holds.insert(tx, hold);                       // business state
+await runInTransaction(async (tx) => {
+  await ledger.commit(entry, tx);                     // business state
   await outboxStore.add(                              // …and its event, atomically
     createOutboxRecord({
-      aggregateType: 'hold',
-      aggregateId: hold.id,
-      eventType: 'inventory.held',
-      payload: { bookingId, qty },
+      aggregateType: 'ledger_entry',
+      aggregateId: entry.id,
+      eventType: 'ledger.committed',
+      payload: { bookingId, amount },
     }),
+    tx,
   );
 });
 ```
+
+The `ledger` leg wires exactly this; the other producing legs adopt the same
+shape. Maps onto one database transaction in production; the in-memory unit of
+work buffers each enlisted write and applies them together on commit.
 
 A background `OutboxRelay` then drains the store. For each row it opens a PRODUCER
 span **parented to the staged trace**, re-injects that span's context into the
@@ -203,6 +210,13 @@ relay.start(250); // poll every 250ms; relay.stop() on shutdown
 `InMemoryOutboxStore` is the reference store implementation — it models leasing,
 back-off, and dead-lettering exactly as a SQL store would, and serves as a fake
 in tests until the Postgres-backed store lands with the services.
+
+The guarantee is **proven under crash** (`durability.spec.ts`): a staging
+transaction that rolls back leaves no outbox row, so no phantom event ever
+publishes; a committed row is still published when the relay crashes mid-publish
+(the lease expires and a restarted relay re-claims it), so no event is lost; and
+a crash between the broker accepting an event and the relay recording it
+re-delivers rather than drops — the duplicate the idempotent inbox absorbs.
 
 ### `@signalman/inbox`
 
@@ -451,9 +465,12 @@ ledger posts — and stages into its events — is the plain number its types
 declare, ready for the reconciler to compare against the other sources of truth.
 
 Each state change is paired with an outbox event (`ledger.committed` /
-`ledger.reversed`) staged through `@signalman/outbox`. The in-memory ledger and
-outbox stores are reference implementations; the Postgres-backed stores and the
-broker relay land with later milestones.
+`ledger.reversed`) staged through `@signalman/outbox`, and the entry write and
+its event are wrapped in `runInTransaction` so they **commit together or not at
+all** — the ledger is the first leg to close the dual-write window in the
+reference, not just "in Postgres later." The in-memory ledger and outbox stores
+are reference implementations; the Postgres-backed stores and the broker relay
+land with later milestones.
 
 ### `services/coordinator`
 

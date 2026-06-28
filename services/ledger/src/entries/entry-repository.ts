@@ -7,8 +7,10 @@
  * implementation backs this with the service's own Postgres, and crucially runs
  * {@link LedgerRepository.commit} — and the outbox row that accompanies it —
  * inside **one** transaction, so the state change and its event commit together
- * (the transactional-outbox guarantee).
+ * (the transactional-outbox guarantee). That single transaction is the {@link
+ * UnitOfWork} the service threads through both writes via `runInTransaction`.
  */
+import { type UnitOfWork } from '@signalman/outbox';
 import { type LedgerEntry } from './entry';
 
 /** The persistence seam a ledger-entry transition writes through. */
@@ -23,8 +25,12 @@ export interface LedgerRepository {
    * Persist a ledger entry, whether freshly posted or transitioned (reversed).
    * Upserts on `bookingId` — a booking holds exactly one entry, which advances
    * through its lifecycle in place.
+   *
+   * Pass the surrounding {@link UnitOfWork} so the entry commits atomically with
+   * the outbox event the service stages alongside it — the transactional-outbox
+   * guarantee that an event is published if and only if its state change did.
    */
-  commit(entry: LedgerEntry): Promise<void>;
+  commit(entry: LedgerEntry, tx?: UnitOfWork): Promise<void>;
 }
 
 /**
@@ -41,7 +47,15 @@ export class InMemoryLedgerRepository implements LedgerRepository {
     return entry ? { ...entry } : undefined;
   }
 
-  async commit(entry: LedgerEntry): Promise<void> {
-    this.entriesByBooking.set(entry.bookingId, { ...entry });
+  async commit(entry: LedgerEntry, tx?: UnitOfWork): Promise<void> {
+    // Enlisted in a unit of work the upsert defers to commit so it lands with the
+    // outbox row; standalone it applies immediately (the two-arg shape the fake
+    // keeps for callers that do not stage an event).
+    const write = (): void => void this.entriesByBooking.set(entry.bookingId, { ...entry });
+    if (tx) {
+      tx.defer(write);
+    } else {
+      write();
+    }
   }
 }

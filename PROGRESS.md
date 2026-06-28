@@ -163,7 +163,23 @@ concrete slices needed to call it done.
   `MessageBroker` boundary (with an `InMemoryBroker` reference), so the relay
   publishes onto an actual broker in-process. The Postgres-backed `OutboxStore`,
   the NATS-backed broker adapter, and per-service relay wiring land next
-- ☐ Crash test: no lost and no phantom events
+- ◐ Transactional staging (the "transactional" in transactional outbox) —
+  `runInTransaction` threads a `UnitOfWork` through a service's business-state
+  write and the outbox `add` it accompanies so the two **commit together or not
+  at all**, closing the dual-write window in the in-memory reference (not just
+  "in Postgres later"). `InMemoryOutboxStore.add(record, tx?)` and the
+  `OutboxStore` contract now take that unit of work; the **ledger** leg is the
+  first adopter (`InMemoryLedgerRepository.commit` + both `commit`/`reverse`
+  paths wrapped in `runInTransaction`). The inventory/payments/supplier legs
+  adopt the same shape next
+- ☑ Crash test: no lost and no phantom events — `libs/outbox/durability.spec.ts`
+  pins the guarantee against precise crash points: a staging transaction that
+  rolls back leaves **no outbox row** (no phantom event ever publishes); a
+  committed row is still published when the relay **crashes mid-publish** (its
+  lease expires and a restarted relay re-claims it — no lost event); and a crash
+  **between the broker accepting the event and the relay recording it**
+  re-delivers rather than drops it (at-least-once, the duplicate the idempotent
+  inbox absorbs — proven in `@signalman/broker`)
 
 ### M3 — Trace propagation ◐
 

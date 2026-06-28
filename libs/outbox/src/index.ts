@@ -11,6 +11,7 @@ export {
   type OutboxStore,
 } from './store';
 export { InMemoryOutboxStore } from './memory-store';
+export { runInTransaction, type DeferredWrite, type UnitOfWork } from './transaction';
 export {
   DEFAULT_BACKOFF_CAP_MS,
   DEFAULT_BATCH_SIZE,

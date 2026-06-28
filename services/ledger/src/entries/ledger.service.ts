@@ -17,12 +17,14 @@
  * outage path; the only non-commit outcome is a business **rejection** (a
  * non-positive amount), returned as data with a reason and changing no state.
  *
- * Both `commit` and the outbox `add` it accompanies belong in **one** transaction
- * in the Postgres-backed implementation; the in-memory collaborators used in
- * tests stand in until that lands, exactly as the other `@signalman/*` reference
- * stores do.
+ * Both `commit` and the outbox `add` it accompanies run in **one** transaction —
+ * `runInTransaction` threads a unit of work through the entry write and the
+ * outbox staging so they commit together (or not at all), defeating the
+ * dual-write problem. The in-memory collaborators model that atomic commit; a
+ * Postgres-backed store swaps in behind the same tokens and gets it from a real
+ * database transaction.
  */
-import { createOutboxRecord, type OutboxStore } from '@signalman/outbox';
+import { createOutboxRecord, runInTransaction, type OutboxStore } from '@signalman/outbox';
 import { randomUUID } from 'node:crypto';
 import { type LedgerEntry } from './entry';
 import { type LedgerRepository } from './entry-repository';
@@ -86,7 +88,8 @@ export class LedgerService {
    * Idempotent per booking: if the booking is already posted the standing entry
    * is returned unchanged. Otherwise the amount is validated — a non-positive
    * amount is rejected without touching state or staging an event — and on
-   * success the entry and a `ledger.committed` event are committed together.
+   * success the entry and a `ledger.committed` event are committed together in
+   * one transaction.
    */
   async commit(command: CommitCommand): Promise<CommitOutcome> {
     const existing = await this.entries.findByBooking(command.bookingId);
@@ -108,21 +111,25 @@ export class LedgerService {
       committedAt: this.clock(),
     };
 
-    await this.entries.commit(entry);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'ledger_entry',
-        aggregateId: entry.id,
-        eventType: 'ledger.committed',
-        payload: {
-          bookingId: entry.bookingId,
-          amount: entry.amount,
-          currency: entry.currency,
-          entryId: entry.id,
-          captureId: entry.captureId,
-        },
-      }),
-    );
+    // One transaction: the entry and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.entries.commit(entry, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'ledger_entry',
+          aggregateId: entry.id,
+          eventType: 'ledger.committed',
+          payload: {
+            bookingId: entry.bookingId,
+            amount: entry.amount,
+            currency: entry.currency,
+            entryId: entry.id,
+            captureId: entry.captureId,
+          },
+        }),
+        tx,
+      );
+    });
 
     return { committed: true, entryId: entry.id };
   }
@@ -133,7 +140,7 @@ export class LedgerService {
    * Idempotent: it targets the `committed -> reversed` transition. An entry that
    * is already reversed, or was never posted, yields a successful no-op so the
    * compensation can fire more than once. A live reversal commits the reversed
-   * entry and a `ledger.reversed` event together.
+   * entry and a `ledger.reversed` event together in one transaction.
    */
   async reverse(command: ReverseCommand): Promise<ReverseOutcome> {
     const existing = await this.entries.findByBooking(command.bookingId);
@@ -147,20 +154,24 @@ export class LedgerService {
       reversedAt: this.clock(),
     };
 
-    await this.entries.commit(reversed);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'ledger_entry',
-        aggregateId: reversed.id,
-        eventType: 'ledger.reversed',
-        payload: {
-          bookingId: reversed.bookingId,
-          amount: reversed.amount,
-          currency: reversed.currency,
-          entryId: reversed.id,
-        },
-      }),
-    );
+    // One transaction: the reversal and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.entries.commit(reversed, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'ledger_entry',
+          aggregateId: reversed.id,
+          eventType: 'ledger.reversed',
+          payload: {
+            bookingId: reversed.bookingId,
+            amount: reversed.amount,
+            currency: reversed.currency,
+            entryId: reversed.id,
+          },
+        }),
+        tx,
+      );
+    });
 
     return { reversed: true, entryId: reversed.id };
   }
