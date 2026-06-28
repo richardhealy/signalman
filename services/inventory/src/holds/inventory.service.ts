@@ -12,12 +12,14 @@
  *   released (or never existed), so the compensation can fire more than once
  *   without over-restoring stock.
  *
- * Both `commitHold`/`commitRelease` and the outbox `add` they accompany belong
- * in **one** transaction in the Postgres-backed implementation; the in-memory
- * collaborators used in tests stand in until that lands, exactly as the other
- * `@signalman/*` reference stores do.
+ * Both `commitHold`/`commitRelease` and the outbox `add` they accompany run in
+ * **one** transaction — `runInTransaction` threads a unit of work through the
+ * hold write and the outbox staging so they commit together (or not at all),
+ * defeating the dual-write problem. The in-memory collaborators model that atomic
+ * commit; a Postgres-backed store swaps in behind the same tokens and gets it from
+ * a real database transaction.
  */
-import { createOutboxRecord, type OutboxStore } from '@signalman/outbox';
+import { createOutboxRecord, runInTransaction, type OutboxStore } from '@signalman/outbox';
 import { randomUUID } from 'node:crypto';
 import { type Hold } from './hold';
 import { type HoldRepository } from './hold-repository';
@@ -79,7 +81,7 @@ export class InventoryService {
    * hold is returned unchanged. Otherwise availability is checked — an
    * insufficient-stock request is rejected without touching state or staging an
    * event — and on success the hold and an `inventory.held` event are committed
-   * together.
+   * together in one transaction.
    */
   async hold(command: HoldCommand): Promise<HoldOutcome> {
     const existing = await this.holds.findByBooking(command.bookingId);
@@ -105,15 +107,19 @@ export class InventoryService {
       createdAt: this.clock(),
     };
 
-    await this.holds.commitHold(hold);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'hold',
-        aggregateId: hold.id,
-        eventType: 'inventory.held',
-        payload: { bookingId: hold.bookingId, sku: hold.sku, qty: hold.qty },
-      }),
-    );
+    // One transaction: the hold and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.holds.commitHold(hold, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'hold',
+          aggregateId: hold.id,
+          eventType: 'inventory.held',
+          payload: { bookingId: hold.bookingId, sku: hold.sku, qty: hold.qty },
+        }),
+        tx,
+      );
+    });
 
     return { held: true, holdId: hold.id, available: available - hold.qty };
   }
@@ -124,7 +130,7 @@ export class InventoryService {
    * Idempotent: a hold that is already released — or was never placed — yields a
    * successful no-op so the compensation can fire more than once without
    * over-restoring stock. A live release commits the released hold and an
-   * `inventory.released` event together.
+   * `inventory.released` event together in one transaction.
    */
   async release(command: ReleaseCommand): Promise<ReleaseOutcome> {
     const existing = await this.holds.findByBooking(command.bookingId);
@@ -134,15 +140,19 @@ export class InventoryService {
 
     const released: Hold = { ...existing, status: 'released', releasedAt: this.clock() };
 
-    await this.holds.commitRelease(released);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'hold',
-        aggregateId: released.id,
-        eventType: 'inventory.released',
-        payload: { bookingId: released.bookingId, sku: released.sku, qty: released.qty },
-      }),
-    );
+    // One transaction: the release and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.holds.commitRelease(released, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'hold',
+          aggregateId: released.id,
+          eventType: 'inventory.released',
+          payload: { bookingId: released.bookingId, sku: released.sku, qty: released.qty },
+        }),
+        tx,
+      );
+    });
 
     return { released: true, holdId: released.id };
   }

@@ -7,8 +7,12 @@
  * production implementation backs this with the service's own Postgres, and
  * crucially runs {@link PaymentRepository.commit} — and the outbox row that
  * accompanies it — inside **one** transaction, so the state change and its event
- * commit together (the transactional-outbox guarantee).
+ * commit together (the transactional-outbox guarantee). That single transaction
+ * is the {@link UnitOfWork} the service threads through both writes via
+ * `runInTransaction`; the in-memory reference models the same all-or-nothing
+ * commit by deferring its upsert into the unit of work.
  */
+import { type UnitOfWork } from '@signalman/outbox';
 import { type Payment } from './payment';
 
 /** The persistence seam a payment transition writes through. */
@@ -23,8 +27,13 @@ export interface PaymentRepository {
    * Persist a payment, whether freshly authorized or transitioned (captured,
    * voided). Upserts on `bookingId` — a booking holds exactly one payment
    * record, which advances through its lifecycle in place.
+   *
+   * Pass the surrounding {@link UnitOfWork} so the payment commits atomically
+   * with the `payment.*` outbox event the service stages alongside it — the
+   * transactional-outbox guarantee that an event is published if and only if its
+   * state change did.
    */
-  commit(payment: Payment): Promise<void>;
+  commit(payment: Payment, tx?: UnitOfWork): Promise<void>;
 }
 
 /**
@@ -41,7 +50,14 @@ export class InMemoryPaymentRepository implements PaymentRepository {
     return payment ? { ...payment } : undefined;
   }
 
-  async commit(payment: Payment): Promise<void> {
-    this.paymentsByBooking.set(payment.bookingId, { ...payment });
+  async commit(payment: Payment, tx?: UnitOfWork): Promise<void> {
+    // Enlisted in a unit of work the upsert defers to commit so it lands with the
+    // outbox row; standalone it applies immediately.
+    const write = (): void => void this.paymentsByBooking.set(payment.bookingId, { ...payment });
+    if (tx) {
+      tx.defer(write);
+    } else {
+      write();
+    }
   }
 }

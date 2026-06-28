@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — 2026-06-29
+- **Transactional staging across every producing leg** — the dual-write window is
+  now closed in all four event-producing services, not just the ledger. The
+  inventory (`hold`/`release`), payments (`authorize`/`capture`/`void`), and
+  supplier (`confirm`/`cancel`) legs each wrap their business-state write and the
+  outbox `add` it accompanies in `runInTransaction`, threading one `UnitOfWork`
+  through both so they **commit together or not at all** — closing M2's
+  "transactional staging" item, which the ledger leg opened. Each leg repository's
+  write method (`HoldRepository.commitHold`/`commitRelease`,
+  `PaymentRepository.commit`, `ConfirmationRepository.commit`) now takes the
+  optional unit of work and defers its in-memory mutation into it, so the state
+  change lands atomically with the event in the reference rather than "in Postgres
+  later." Two subtleties are preserved: inventory's oversell guard stays **eager**
+  (a would-oversell write throws before anything is enlisted, rolling the whole
+  unit of work back), and the external calls that **cannot** roll back — the
+  payments PSP and the supplier partner — run **before** the transaction, so a
+  rollback never strands a charged PSP or a confirmed partner without its recorded
+  state (a retry replays them idempotently). Each leg's service test pins the
+  guarantee directly: when the outbox `add` throws, the state change rolls back
+  with it — no state without its event, no event without its state.
+
 ### Added — 2026-06-29
 - `@signalman/outbox`: **transactional staging** — the "transactional" in
   transactional outbox. `runInTransaction` threads a `UnitOfWork` through a

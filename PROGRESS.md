@@ -163,15 +163,21 @@ concrete slices needed to call it done.
   `MessageBroker` boundary (with an `InMemoryBroker` reference), so the relay
   publishes onto an actual broker in-process. The Postgres-backed `OutboxStore`,
   the NATS-backed broker adapter, and per-service relay wiring land next
-- ◐ Transactional staging (the "transactional" in transactional outbox) —
+- ☑ Transactional staging (the "transactional" in transactional outbox) —
   `runInTransaction` threads a `UnitOfWork` through a service's business-state
   write and the outbox `add` it accompanies so the two **commit together or not
   at all**, closing the dual-write window in the in-memory reference (not just
-  "in Postgres later"). `InMemoryOutboxStore.add(record, tx?)` and the
-  `OutboxStore` contract now take that unit of work; the **ledger** leg is the
-  first adopter (`InMemoryLedgerRepository.commit` + both `commit`/`reverse`
-  paths wrapped in `runInTransaction`). The inventory/payments/supplier legs
-  adopt the same shape next
+  "in Postgres later"). `InMemoryOutboxStore.add(record, tx?)` and every leg
+  repository's write now take that unit of work, and **all four legs adopt the
+  shape**: ledger (`commit`/`reverse`), inventory (`hold`/`release` — its
+  oversell guard stays eager so a would-oversell write rolls the unit of work
+  back before anything commits), payments (`authorize`/`capture`/`void`, with the
+  PSP call kept outside the transaction as the one side effect that cannot roll
+  back), and supplier (`confirm`/`cancel`, with the partner call kept outside
+  likewise). Each leg's service test pins the atomicity directly: when the outbox
+  `add` throws, the state change rolls back with it — no state without its event.
+  The Postgres-backed stores swap in behind the same tokens and get the same
+  guarantee from a real database transaction
 - ☑ Crash test: no lost and no phantom events — `libs/outbox/durability.spec.ts`
   pins the guarantee against precise crash points: a staging transaction that
   rolls back leaves **no outbox row** (no phantom event ever publishes); a

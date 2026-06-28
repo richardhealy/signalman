@@ -188,9 +188,15 @@ await runInTransaction(async (tx) => {
 });
 ```
 
-The `ledger` leg wires exactly this; the other producing legs adopt the same
-shape. Maps onto one database transaction in production; the in-memory unit of
-work buffers each enlisted write and applies them together on commit.
+All four producing legs wire exactly this — ledger (`commit`/`reverse`),
+inventory (`hold`/`release`), payments (`authorize`/`capture`/`void`), and
+supplier (`confirm`/`cancel`) — so none has a window where state committed but the
+event was lost. Where a leg calls an external party (the PSP, the partner) that
+call runs **before** the transaction, since it is the one side effect that cannot
+roll back; inventory's oversell guard stays eager for the same reason, rolling the
+unit of work back before anything commits. Maps onto one database transaction in
+production; the in-memory unit of work buffers each enlisted write and applies
+them together on commit.
 
 A background `OutboxRelay` then drains the store. For each row it opens a PRODUCER
 span **parented to the staged trace**, re-injects that span's context into the
@@ -377,13 +383,15 @@ commands over gRPC (`proto/inventory.proto`):
   over-restoring stock.
 
 Each state change is paired with an outbox event (`inventory.held` /
-`inventory.released`) staged through `@signalman/outbox`, so the rest of the
-system learns what happened without the dual-write problem. Every gRPC handler
-is wrapped by `@signalman/interceptor`'s SERVER span — the inventory hop of the
-booking trace — and the staged events continue from it, so the whole leg hangs
-off one connected trace. The in-memory hold and outbox stores are reference
-implementations; the Postgres-backed stores and the relay that drains events to
-the broker land with the datastore and broker milestones.
+`inventory.released`) staged through `@signalman/outbox`, and the hold write and
+its event are wrapped in `runInTransaction` so they **commit together or not at
+all** — no hold without its event. The oversell guard stays eager, so a
+would-oversell write rolls the unit of work back before anything commits. Every
+gRPC handler is wrapped by `@signalman/interceptor`'s SERVER span — the inventory
+hop of the booking trace — and the staged events continue from it, so the whole
+leg hangs off one connected trace. The in-memory hold and outbox stores are
+reference implementations; the Postgres-backed stores and the relay that drains
+events to the broker land with the datastore and broker milestones.
 
 ### `services/payments`
 
@@ -409,10 +417,14 @@ between a PSP **decline** (a business "no", returned as data) and a PSP
 coordinator can retry the hop).
 
 Each state change is paired with an outbox event (`payment.authorized` /
-`payment.captured` / `payment.voided`) staged through `@signalman/outbox`. As
-with inventory, the in-memory payment and outbox stores are reference
-implementations; the Postgres-backed stores and the broker relay land with later
-milestones.
+`payment.captured` / `payment.voided`) staged through `@signalman/outbox`, and
+the payment write and its event are wrapped in `runInTransaction` so they
+**commit together or not at all**. The PSP call runs **before** the transaction —
+it is the one side effect that cannot roll back — so a rollback never leaves a
+charged PSP without a recorded payment; a retried authorize replays it
+idempotently. As with inventory, the in-memory payment and outbox stores are
+reference implementations; the Postgres-backed stores and the broker relay land
+with later milestones.
 
 ### `services/supplier`
 
@@ -438,9 +450,12 @@ returned as data with a reason) and a partner **outage** (a thrown error,
 propagated so the gRPC SERVER span errors and the coordinator can retry the hop).
 
 Each state change is paired with an outbox event (`supplier.confirmed` /
-`supplier.cancelled`) staged through `@signalman/outbox`. The in-memory
-confirmation and outbox stores are reference implementations; the Postgres-backed
-stores and the broker relay land with later milestones.
+`supplier.cancelled`) staged through `@signalman/outbox`, and the confirmation
+write and its event are wrapped in `runInTransaction` so they **commit together
+or not at all**. The partner call runs **before** the transaction — the side
+effect that cannot roll back — so a retried confirm replays it idempotently. The
+in-memory confirmation and outbox stores are reference implementations; the
+Postgres-backed stores and the broker relay land with later milestones.
 
 ### `services/ledger`
 
@@ -467,10 +482,12 @@ declare, ready for the reconciler to compare against the other sources of truth.
 Each state change is paired with an outbox event (`ledger.committed` /
 `ledger.reversed`) staged through `@signalman/outbox`, and the entry write and
 its event are wrapped in `runInTransaction` so they **commit together or not at
-all** — the ledger is the first leg to close the dual-write window in the
-reference, not just "in Postgres later." The in-memory ledger and outbox stores
-are reference implementations; the Postgres-backed stores and the broker relay
-land with later milestones.
+all** — closing the dual-write window in the reference, not just "in Postgres
+later." Every producing leg (inventory, payments, supplier, ledger) now stages
+this way, each with a service test that pins the rollback: when the outbox `add`
+throws, the state change rolls back with it. The in-memory ledger and outbox
+stores are reference implementations; the Postgres-backed stores and the broker
+relay land with later milestones.
 
 ### `services/coordinator`
 

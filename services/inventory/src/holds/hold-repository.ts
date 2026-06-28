@@ -7,8 +7,12 @@
  * implementation backs this with the service's own Postgres, and crucially runs
  * {@link HoldRepository.commitHold}/{@link HoldRepository.commitRelease} — and
  * the outbox row that accompanies them — inside **one** transaction, so the state
- * change and its event commit together (the transactional-outbox guarantee).
+ * change and its event commit together (the transactional-outbox guarantee). That
+ * single transaction is the {@link UnitOfWork} the service threads through both
+ * writes via `runInTransaction`; the in-memory reference models the same
+ * all-or-nothing commit by deferring its mutation into the unit of work.
  */
+import { type UnitOfWork } from '@signalman/outbox';
 import { type Hold } from './hold';
 
 /** The two writes a hold transition makes, expressed as one atomic operation. */
@@ -26,15 +30,25 @@ export interface HoldRepository {
    * Persist a freshly placed hold and draw its `qty` down from the SKU's
    * availability, atomically. Rejects rather than overselling if availability
    * has dropped below `qty` since the caller checked — the last line of defence
-   * a Postgres implementation enforces with `SELECT … FOR UPDATE`.
+   * a Postgres implementation enforces with `SELECT … FOR UPDATE`. That check is
+   * eager (it can still reject), so a would-oversell write rolls the whole unit
+   * of work back before anything commits.
+   *
+   * Pass the surrounding {@link UnitOfWork} so the hold commits atomically with
+   * the `inventory.held` outbox event the service stages alongside it — the
+   * transactional-outbox guarantee that an event is published if and only if its
+   * state change did.
    */
-  commitHold(hold: Hold): Promise<void>;
+  commitHold(hold: Hold, tx?: UnitOfWork): Promise<void>;
 
   /**
    * Persist a released hold and return its `qty` to the SKU's availability,
    * atomically. The compensation leg.
+   *
+   * Pass the surrounding {@link UnitOfWork} so the release commits atomically
+   * with the `inventory.released` outbox event staged alongside it.
    */
-  commitRelease(hold: Hold): Promise<void>;
+  commitRelease(hold: Hold, tx?: UnitOfWork): Promise<void>;
 }
 
 /** Construction options for {@link InMemoryHoldRepository}. */
@@ -66,20 +80,38 @@ export class InMemoryHoldRepository implements HoldRepository {
     return this.stock.get(sku) ?? 0;
   }
 
-  async commitHold(hold: Hold): Promise<void> {
+  async commitHold(hold: Hold, tx?: UnitOfWork): Promise<void> {
+    // The oversell guard runs eagerly: a rejection here throws before anything is
+    // enlisted, so it rolls the whole unit of work back (no hold, no event).
     const available = this.stock.get(hold.sku) ?? 0;
     if (hold.qty > available) {
       throw new Error(
         `cannot hold ${hold.qty} of ${hold.sku}: would oversell (available ${available})`,
       );
     }
-    this.stock.set(hold.sku, available - hold.qty);
-    this.holdsByBooking.set(hold.bookingId, { ...hold });
+    // The mutation is infallible past the guard, so it defers to commit (landing
+    // with the outbox row) when enlisted, or applies immediately when not.
+    const write = (): void => {
+      this.stock.set(hold.sku, available - hold.qty);
+      this.holdsByBooking.set(hold.bookingId, { ...hold });
+    };
+    if (tx) {
+      tx.defer(write);
+    } else {
+      write();
+    }
   }
 
-  async commitRelease(hold: Hold): Promise<void> {
+  async commitRelease(hold: Hold, tx?: UnitOfWork): Promise<void> {
     const available = this.stock.get(hold.sku) ?? 0;
-    this.stock.set(hold.sku, available + hold.qty);
-    this.holdsByBooking.set(hold.bookingId, { ...hold });
+    const write = (): void => {
+      this.stock.set(hold.sku, available + hold.qty);
+      this.holdsByBooking.set(hold.bookingId, { ...hold });
+    };
+    if (tx) {
+      tx.defer(write);
+    } else {
+      write();
+    }
   }
 }

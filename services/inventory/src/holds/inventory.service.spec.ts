@@ -110,4 +110,42 @@ describe('InventoryService', () => {
       expect(outbox.all()).toHaveLength(0);
     });
   });
+
+  describe('transactional staging', () => {
+    // The state change and its event share one unit of work: if the outbox write
+    // fails, the hold must roll back with it — no state without its event.
+    class ExplodingOutboxStore extends InMemoryOutboxStore {
+      override async add(): Promise<void> {
+        throw new Error('outbox write failed');
+      }
+    }
+
+    it('rolls the hold back when staging its event fails — no state, no event', async () => {
+      const holds = new InMemoryHoldRepository({ stock: { 'seat-A': 10 } });
+      const outbox = new ExplodingOutboxStore();
+      const service = new InventoryService({ holds, outbox, idFactory: () => 'hold_1' });
+
+      await expect(service.hold({ bookingId: 'bk_1', sku: 'seat-A', qty: 3 })).rejects.toThrow(
+        'outbox write failed',
+      );
+
+      // The hold never persisted and the stock was never drawn down.
+      await expect(holds.findByBooking('bk_1')).resolves.toBeUndefined();
+      await expect(holds.availableFor('seat-A')).resolves.toBe(10);
+      expect(outbox.all()).toHaveLength(0);
+    });
+
+    it('rolls the release back when staging its event fails — stock not restored twice', async () => {
+      const holds = new InMemoryHoldRepository({ stock: { 'seat-A': 10 } });
+      const good = new InventoryService({ holds, outbox: new InMemoryOutboxStore(), idFactory: () => 'hold_1' });
+      await good.hold({ bookingId: 'bk_1', sku: 'seat-A', qty: 3 });
+
+      const service = new InventoryService({ holds, outbox: new ExplodingOutboxStore() });
+      await expect(service.release({ bookingId: 'bk_1' })).rejects.toThrow('outbox write failed');
+
+      // Still held: the release neither flipped the status nor returned the stock.
+      await expect(holds.findByBooking('bk_1')).resolves.toMatchObject({ status: 'held' });
+      await expect(holds.availableFor('seat-A')).resolves.toBe(7);
+    });
+  });
 });

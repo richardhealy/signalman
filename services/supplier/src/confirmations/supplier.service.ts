@@ -18,12 +18,15 @@
  * (a thrown {@link SupplierUnavailableError}, propagated so the gRPC handler's
  * SERVER span is marked errored and the coordinator can retry the external hop).
  *
- * Both `commit` and the outbox `add` it accompanies belong in **one** transaction
- * in the Postgres-backed implementation; the in-memory collaborators used in
- * tests stand in until that lands, exactly as the other `@signalman/*` reference
- * stores do.
+ * The partner call is the one side effect that cannot roll back, so it runs
+ * **before** the transaction; once it returns, the `commit` and the outbox `add`
+ * it accompanies run in **one** transaction — `runInTransaction` threads a unit of
+ * work through the confirmation write and the outbox staging so they commit
+ * together (or not at all), defeating the dual-write problem. The in-memory
+ * collaborators model that atomic commit; a Postgres-backed store swaps in behind
+ * the same tokens and gets it from a real database transaction.
  */
-import { createOutboxRecord, type OutboxStore } from '@signalman/outbox';
+import { createOutboxRecord, runInTransaction, type OutboxStore } from '@signalman/outbox';
 import { randomUUID } from 'node:crypto';
 import { type Confirmation } from './confirmation';
 import { type ConfirmationRepository } from './confirmation-repository';
@@ -117,20 +120,24 @@ export class SupplierService {
       createdAt: this.clock(),
     };
 
-    await this.confirmations.commit(confirmation);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'confirmation',
-        aggregateId: confirmation.id,
-        eventType: 'supplier.confirmed',
-        payload: {
-          bookingId: confirmation.bookingId,
-          sku: confirmation.sku,
-          qty: confirmation.qty,
-          confirmationId: confirmation.confirmationId,
-        },
-      }),
-    );
+    // One transaction: the confirmation and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.confirmations.commit(confirmation, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'confirmation',
+          aggregateId: confirmation.id,
+          eventType: 'supplier.confirmed',
+          payload: {
+            bookingId: confirmation.bookingId,
+            sku: confirmation.sku,
+            qty: confirmation.qty,
+            confirmationId: confirmation.confirmationId,
+          },
+        }),
+        tx,
+      );
+    });
 
     return { confirmed: true, confirmationId: confirmation.confirmationId };
   }
@@ -157,20 +164,24 @@ export class SupplierService {
       cancelledAt: this.clock(),
     };
 
-    await this.confirmations.commit(cancelled);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'confirmation',
-        aggregateId: cancelled.id,
-        eventType: 'supplier.cancelled',
-        payload: {
-          bookingId: cancelled.bookingId,
-          sku: cancelled.sku,
-          qty: cancelled.qty,
-          confirmationId: cancelled.confirmationId,
-        },
-      }),
-    );
+    // One transaction: the cancellation and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.confirmations.commit(cancelled, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'confirmation',
+          aggregateId: cancelled.id,
+          eventType: 'supplier.cancelled',
+          payload: {
+            bookingId: cancelled.bookingId,
+            sku: cancelled.sku,
+            qty: cancelled.qty,
+            confirmationId: cancelled.confirmationId,
+          },
+        }),
+        tx,
+      );
+    });
 
     return { cancelled: true, confirmationId: cancelled.confirmationId };
   }

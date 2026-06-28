@@ -19,12 +19,15 @@
  * {@link PspUnavailableError}, propagated so the gRPC handler's SERVER span is
  * marked errored and the coordinator can retry the external hop).
  *
- * Both `commit` and the outbox `add` it accompanies belong in **one** transaction
- * in the Postgres-backed implementation; the in-memory collaborators used in
- * tests stand in until that lands, exactly as the other `@signalman/*` reference
- * stores do.
+ * The PSP call is the one side effect that cannot roll back, so it runs **before**
+ * the transaction; once it returns, the `commit` and the outbox `add` it
+ * accompanies run in **one** transaction — `runInTransaction` threads a unit of
+ * work through the payment write and the outbox staging so they commit together
+ * (or not at all), defeating the dual-write problem. The in-memory collaborators
+ * model that atomic commit; a Postgres-backed store swaps in behind the same
+ * tokens and gets it from a real database transaction.
  */
-import { createOutboxRecord, type OutboxStore } from '@signalman/outbox';
+import { createOutboxRecord, runInTransaction, type OutboxStore } from '@signalman/outbox';
 import { randomUUID } from 'node:crypto';
 import { type Payment, type PaymentStatus } from './payment';
 import { type PaymentRepository } from './payment-repository';
@@ -138,20 +141,24 @@ export class PaymentsService {
       createdAt: this.clock(),
     };
 
-    await this.payments.commit(payment);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'payment',
-        aggregateId: payment.id,
-        eventType: 'payment.authorized',
-        payload: {
-          bookingId: payment.bookingId,
-          amount: payment.amount,
-          currency: payment.currency,
-          authorizationId: payment.authorizationId,
-        },
-      }),
-    );
+    // One transaction: the payment and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.payments.commit(payment, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'payment',
+          aggregateId: payment.id,
+          eventType: 'payment.authorized',
+          payload: {
+            bookingId: payment.bookingId,
+            amount: payment.amount,
+            currency: payment.currency,
+            authorizationId: payment.authorizationId,
+          },
+        }),
+        tx,
+      );
+    });
 
     return {
       authorized: true,
@@ -189,21 +196,25 @@ export class PaymentsService {
       capturedAt: this.clock(),
     };
 
-    await this.payments.commit(captured);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'payment',
-        aggregateId: captured.id,
-        eventType: 'payment.captured',
-        payload: {
-          bookingId: captured.bookingId,
-          amount: captured.amount,
-          currency: captured.currency,
-          authorizationId: captured.authorizationId,
-          captureId,
-        },
-      }),
-    );
+    // One transaction: the capture and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.payments.commit(captured, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'payment',
+          aggregateId: captured.id,
+          eventType: 'payment.captured',
+          payload: {
+            bookingId: captured.bookingId,
+            amount: captured.amount,
+            currency: captured.currency,
+            authorizationId: captured.authorizationId,
+            captureId,
+          },
+        }),
+        tx,
+      );
+    });
 
     return { captured: true, paymentId: captured.id, captureId };
   }
@@ -226,20 +237,24 @@ export class PaymentsService {
     await this.psp.voidAuthorization(existing.authorizationId);
     const voided: Payment = { ...existing, status: 'voided', voidedAt: this.clock() };
 
-    await this.payments.commit(voided);
-    await this.outbox.add(
-      createOutboxRecord({
-        aggregateType: 'payment',
-        aggregateId: voided.id,
-        eventType: 'payment.voided',
-        payload: {
-          bookingId: voided.bookingId,
-          amount: voided.amount,
-          currency: voided.currency,
-          authorizationId: voided.authorizationId,
-        },
-      }),
-    );
+    // One transaction: the void and its event commit together or not at all.
+    await runInTransaction(async (tx) => {
+      await this.payments.commit(voided, tx);
+      await this.outbox.add(
+        createOutboxRecord({
+          aggregateType: 'payment',
+          aggregateId: voided.id,
+          eventType: 'payment.voided',
+          payload: {
+            bookingId: voided.bookingId,
+            amount: voided.amount,
+            currency: voided.currency,
+            authorizationId: voided.authorizationId,
+          },
+        }),
+        tx,
+      );
+    });
 
     return { voided: true, paymentId: voided.id };
   }

@@ -257,4 +257,32 @@ describe('PaymentsService', () => {
       expect(eventsOfType(outbox, 'payment.voided')).toHaveLength(0);
     });
   });
+
+  describe('transactional staging', () => {
+    // The state change and its event share one unit of work: if the outbox write
+    // fails, the payment must roll back with it — no state without its event. The
+    // PSP call already happened (it is the side effect that cannot roll back), so
+    // a retried authorize replays it idempotently.
+    class ExplodingOutboxStore extends InMemoryOutboxStore {
+      override async add(): Promise<void> {
+        throw new Error('outbox write failed');
+      }
+    }
+
+    it('rolls the authorization back when staging its event fails — no state, no event', async () => {
+      const payments = new InMemoryPaymentRepository();
+      const psp = new FakePsp();
+      const outbox = new ExplodingOutboxStore();
+      const service = new PaymentsService({ payments, outbox, psp, idFactory: () => 'pay_1' });
+
+      await expect(
+        service.authorize({ bookingId: 'bk_1', amount: 4200, currency: 'USD' }),
+      ).rejects.toThrow('outbox write failed');
+
+      // The PSP was asked, but the payment never persisted and no event staged.
+      expect(psp.authorizeCalls).toHaveLength(1);
+      await expect(payments.findByBooking('bk_1')).resolves.toBeUndefined();
+      expect(outbox.all()).toHaveLength(0);
+    });
+  });
 });

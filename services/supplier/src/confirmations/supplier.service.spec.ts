@@ -159,4 +159,35 @@ describe('SupplierService', () => {
       expect(outbox.all()).toHaveLength(0);
     });
   });
+
+  describe('transactional staging', () => {
+    // The state change and its event share one unit of work: if the outbox write
+    // fails, the confirmation must roll back with it — no state without its event.
+    // The partner call already happened (it is the side effect that cannot roll
+    // back), so a retried confirm replays it idempotently.
+    class ExplodingOutboxStore extends InMemoryOutboxStore {
+      override async add(): Promise<void> {
+        throw new Error('outbox write failed');
+      }
+    }
+
+    it('rolls the confirmation back when staging its event fails — no state, no event', async () => {
+      const confirmations = new InMemoryConfirmationRepository();
+      const partner = new FakePartner();
+      const outbox = new ExplodingOutboxStore();
+      const service = new SupplierService({
+        confirmations,
+        outbox,
+        partner,
+        idFactory: () => 'conf_rec_1',
+      });
+
+      await expect(service.confirm(confirmCmd)).rejects.toThrow('outbox write failed');
+
+      // The partner was asked, but the confirmation never persisted and no event staged.
+      expect(partner.confirmCalls).toHaveLength(1);
+      await expect(confirmations.findByBooking('bk_1')).resolves.toBeUndefined();
+      expect(outbox.all()).toHaveLength(0);
+    });
+  });
 });
