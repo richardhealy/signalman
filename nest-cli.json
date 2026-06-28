@@ -69,6 +69,15 @@
         "assets": [{ "include": "proto/**/*.proto", "outDir": "dist/services/ledger" }]
       }
     },
+    "notifier": {
+      "type": "application",
+      "root": "services/notifier",
+      "entryFile": "main",
+      "sourceRoot": "services/notifier/src",
+      "compilerOptions": {
+        "tsConfigPath": "services/notifier/tsconfig.app.json"
+      }
+    },
     "otel": {
       "type": "library",
       "root": "libs/otel",

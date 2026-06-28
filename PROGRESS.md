@@ -50,7 +50,21 @@ concrete slices needed to call it done.
     span under the `Book` SERVER span; the orchestrator depends only on the leg
     ports so it is unit-tested against in-memory fakes, and the whole booking is
     verified end to end against all four live leg services over gRPC
-  - ☐ `notifier`, `reconciler`
+  - ☑ `notifier` — the async tail of the saga. Boots as a standalone Nest
+    application context (a pure event consumer, no synchronous gRPC/HTTP surface);
+    a `BookingNotificationConsumer` wraps `@signalman/inbox`'s `IdempotentConsumer`
+    (dedup namespace `notifier`) to consume `ledger.committed` on the booking's
+    own trace and tell the customer via a **simulated notification provider**
+    (`SimulatedNotificationChannel`: controllable latency + failure injection, each
+    send a CLIENT span — the provider boundary hop). Idempotent at two layers —
+    the inbox skips a redelivered message id, and `NotifierService` notifies each
+    booking at most once — so neither redelivery double-sends; a provider outage
+    rethrows for NACK without recording. Terminal consumer, so it keeps a
+    notification source-of-truth record but stages no outbox event. Unit-tested
+    end to end (process-once, redelivery, two-layer dedup, trace continuation with
+    the provider hop nested under the consume span, NACK-on-outage) and verified to
+    boot
+  - ☐ `reconciler`
 - ☑ `libs/otel` — OpenTelemetry SDK bootstrap: OTLP/HTTP exporters, resource identity, managed start/flush lifecycle
 - ☑ `libs/logging` — trace-correlated structured JSON logger (NestJS `LoggerService`, lifts `trace_id`/`span_id`/`trace_flags` from the active span)
 - ☑ `libs/interceptor` — NestJS observability interceptor: per-handler SERVER span (active for the call so child spans join the trace) + RED metrics (duration histogram + error counter), HTTP/gRPC mapped to OTel semconv, wired via `ObservabilityModule.forRoot`
@@ -69,7 +83,9 @@ concrete slices needed to call it done.
   upcoming
 - ◐ Coordinator drives `hold → authorize → confirm → capture → commit` over gRPC
   (verified end to end against the four live leg services); the async `notify`
-  step lands with the notifier and broker
+  step is implemented in the `notifier` service, which consumes `ledger.committed`
+  and notifies the customer — the broker that delivers that event between the two
+  lands with the broker milestone
 - ◐ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
   partner confirmations, wrapping a simulated external partner; ledger owns the
@@ -109,8 +125,11 @@ concrete slices needed to call it done.
 
 - ◐ Inbox dedup; redelivery-safe consumers — reusable `libs/inbox`
   (`processOnce` dedup contract, in-memory reference store, trace-aware
-  `IdempotentConsumer`) is built and unit-tested; the Postgres-backed
-  `InboxStore` and per-consumer wiring land with the services
+  `IdempotentConsumer`) is built and unit-tested, and has its first real consumer:
+  the `notifier` wires an `IdempotentConsumer` (namespace `notifier`) around its
+  `ledger.committed` handler, redelivery-safe and trace-continuing. The
+  Postgres-backed `InboxStore` and the remaining consumers land with the services
+  and broker
 
 ### M6 — Reconciler ☐
 

@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — 2026-06-29
+- `services/notifier`: the async **tail** of the saga — the `… -> notify` step,
+  and the first real consumer of `@signalman/inbox`. Unlike the four legs the
+  notifier is not a synchronous gRPC participant; it is a pure **event consumer**
+  that reacts to a booking's terminal `ledger.committed` event off the broker and
+  tells the customer. A `BookingNotificationConsumer` wraps the
+  `IdempotentConsumer` (dedup namespace `notifier`): it continues the booking's
+  trace — the consume span is a CONSUMER child of the publisher's span, so the
+  notification lands on the *same* trace — and dedups by message id, turning
+  at-least-once delivery into effectively-once processing. A `NotifierService`
+  does the work **idempotently per booking** (notified at most once), so a second
+  message about the same booking sends nothing twice. Behind it sits a **simulated
+  notification provider** (`SimulatedNotificationChannel`) — another external
+  boundary with controllable latency/failure (`NOTIFIER_LATENCY_MS`,
+  `NOTIFIER_FAILURE_RATE`), every send a **CLIENT span** on the booking trace; a
+  provider **outage** propagates so the consumer NACKs and the broker redelivers,
+  recording nothing so the redelivery genuinely retries. Being terminal, the
+  notifier keeps a notification source-of-truth record (a fourth thing the
+  reconciler can check) but stages no outbox event. It boots as a standalone Nest
+  application context (no synchronous surface) and is unit-tested end to end —
+  process-once, redelivery, two-layer dedup, trace continuation with the provider
+  hop nested under the consume span, and NACK-on-outage. The Postgres-backed
+  notification/inbox stores and the broker subscription that feeds the consumer
+  land with later milestones.
+
 ### Added — 2026-06-28
 - `services/coordinator`: the saga orchestrator — the coordinating heart of the
   system, and the happy-path booking end to end (M1). A NestJS gRPC microservice

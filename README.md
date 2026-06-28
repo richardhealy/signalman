@@ -28,12 +28,14 @@ holds — the **payments service** — a gRPC source of truth for
 authorizations/captures wrapping a simulated PSP — the **supplier service** — a
 gRPC source of truth for partner confirmations wrapping a simulated, deliberately
 slow-and-flaky external partner — the **ledger service** — the internal gRPC
-source of truth for the financial record (Commit/Reverse) — and the
+source of truth for the financial record (Commit/Reverse) — the
 **coordinator service** — the saga orchestrator that drives a booking across all
 four legs over gRPC and unwinds the completed steps in reverse on any failure —
-are in place and verified end to end. The remaining services (notifier,
-reconciler), the broker/Postgres/observability stack, and cross-service trace
-propagation are upcoming milestones.
+and the **notifier service** — the async tail that consumes the booking's
+terminal `ledger.committed` event and tells the customer through a simulated
+provider, idempotently via the inbox — are in place and verified. The remaining
+service (reconciler), the broker/Postgres/observability stack, and cross-service
+trace propagation are upcoming milestones.
 
 ## Stack
 
@@ -52,7 +54,8 @@ signalman/
     payments/       # gRPC source of truth for payments (Authorize/Capture/Void), wraps a simulated PSP
     supplier/       # gRPC source of truth for partner confirmations (Confirm/Cancel), wraps a simulated partner
     ledger/         # internal gRPC source of truth for the financial record (Commit/Reverse) + outbox-staged events
-    …               # notifier, reconciler (upcoming)
+    notifier/       # async consumer: tells the customer on ledger.committed, via a simulated provider (inbox-deduped)
+    …               # reconciler (upcoming)
   libs/
     otel/           # OpenTelemetry SDK bootstrap: resource, OTLP exporters, lifecycle
     propagation/    # inject/extract W3C traceparent into broker message headers
@@ -356,6 +359,35 @@ production those ports are gRPC client adapters dialling the real services
 that fold the legs' own spans into this one trace land with the trace-propagation
 milestone.
 
+### `services/notifier`
+
+The async **tail** of the saga — the `… -> notify` step. Unlike the four legs the
+notifier is not a synchronous gRPC participant; it is a pure **event consumer**.
+When the booking reaches its financial terminal state it reacts to the
+`ledger.committed` event off the broker and tells the customer.
+
+- A `BookingNotificationConsumer` wraps `@signalman/inbox`'s `IdempotentConsumer`
+  (dedup namespace `notifier`). It continues the booking's trace — the consume
+  span is a CONSUMER child of the publisher's span, so the notification is on the
+  *same* trace as the booking — and dedups by message id, so the broker's
+  at-least-once delivery becomes effectively-once processing.
+- A `NotifierService` does the work, **idempotently per booking**: a booking is
+  notified at most once, so a second message about the same booking (a distinct
+  id the inbox lets through) still sends nothing twice.
+
+Behind it sits a **simulated notification provider** (`SimulatedNotificationChannel`)
+— another external boundary, with controllable latency and failure
+(`NOTIFIER_LATENCY_MS`, `NOTIFIER_FAILURE_RATE`) and every send wrapped in a
+**CLIENT span**, the provider hop made visible on the booking trace. There is no
+business "rejection" here: a send either succeeds or the provider is unreachable,
+and an **outage** (a thrown error) propagates so the consumer NACKs and the broker
+redelivers — nothing is recorded, so the redelivery genuinely retries. Being the
+terminal consumer, the notifier keeps a notification source-of-truth record (a
+fourth thing the reconciler can check — *was the customer actually told?*) but
+stages no outbox event. The in-memory notification and inbox stores are reference
+implementations; the Postgres-backed stores and the broker subscription that feeds
+the consumer land with later milestones.
+
 ## Getting started
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
@@ -456,6 +488,19 @@ with nothing to compensate; a failure deeper in the saga returns
 address is overridable via `INVENTORY_GRPC_URL`, `PAYMENTS_GRPC_URL`,
 `SUPPLIER_GRPC_URL`, and `LEDGER_GRPC_URL` so docker-compose can address services
 by name.
+
+### Run the notifier service
+
+```bash
+npm run start:notifier          # boots the consumer host; logs "notifier ready"
+```
+
+The notifier is a pure event consumer with no synchronous surface, so it boots as
+an application context and stays resident awaiting messages. The broker
+subscription that delivers `ledger.committed` to it lands with the broker
+milestone; until then its behaviour — consume-once, redelivery-safe, trace-
+continuing, NACK-on-outage — is exercised by the unit tests. Tune the simulated
+provider with `NOTIFIER_LATENCY_MS` and `NOTIFIER_FAILURE_RATE`.
 
 ## Development
 
