@@ -285,15 +285,21 @@ concrete slices needed to call it done.
 
 ### M6 — Reconciler ◐
 
-- ◐ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
+- ☑ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
   the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler, and
   the pure `detectDivergences` engine compares each settled booking's
   inventory/supplier/ledger states against the consistency invariants. The
   comparison, the scheduler, the findings store, and the trace linkage are built
-  and unit-tested against the in-memory `SourceOfTruthGateway` reference; the
-  broker/Postgres-backed gateway that feeds it real per-service state (subscribing
-  to `inventory.*`/`supplier.*`/`ledger.*`) lands with the datastore/broker
-  milestones
+  and unit-tested. The **broker-backed `SourceOfTruthGateway`** is now wired:
+  `BrokerSourceOfTruthGateway` subscribes to `inventory.*`/`supplier.*`/
+  `ledger.*` on the configured broker (in-memory or NATS) and projects each
+  event into a per-booking cross-source snapshot that the reconciler compares.
+  A **settle-grace window** (`RECONCILER_SETTLE_GRACE_MS`, default 30 s) withholds
+  bookings whose last event arrived within the window so partial saga state is
+  never mistaken for a divergence. The gateway's subscriptions are managed by a
+  `BrokerSubscriptionHost` registered in `ReconcilerModule` — established on
+  bootstrap, torn down on shutdown. Fully unit-tested (all six event types,
+  the grace-window filter, multi-booking isolation, trace-header pass-through)
 - ☑ Divergence findings linked to the originating booking trace — each new
   `DivergenceFinding` opens a `reconcile.divergence` span carrying a span link to
   the booking's trace context (lifted from the snapshot) and stamps the finding's

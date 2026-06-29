@@ -7,6 +7,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- `services/reconciler`: **broker-backed `SourceOfTruthGateway`** (M6) — the
+  reconciler now reads real domain events from the broker rather than an empty
+  in-memory store. `BrokerSourceOfTruthGateway` subscribes to `inventory.*`,
+  `supplier.*`, and `ledger.*` on the configured broker (`BROKER=nats` for the
+  docker-compose stack, the in-memory reference otherwise) and projects each
+  event into the per-booking cross-source snapshot the reconciler compares:
+  `inventory.held/released` sets the inventory state, `supplier.confirmed/cancelled`
+  sets the supplier state, and `ledger.committed/reversed` sets the ledger state.
+  A **settle-grace window** (`RECONCILER_SETTLE_GRACE_MS`, default 30 s) withholds
+  bookings whose last observed event arrived within the window, so partial saga
+  state is never mistaken for a divergence — the timer resets on every new event
+  for a booking, so a booking is only eligible once it has been quiet for the full
+  grace period. The gateway's subscriptions (`inventory.*`, `supplier.*`,
+  `ledger.*`) are managed by a `BrokerSubscriptionHost` registered in
+  `ReconcilerModule` — established on `onApplicationBootstrap`, torn down and the
+  transport closed on `onApplicationShutdown`. The trace headers carried by each
+  broker message are passed through as the booking's trace context, so a finding
+  the reconciler raises can be linked to the original booking trace. Covered by
+  15 unit tests: all six event types, grace-window filter (withheld, settled,
+  timer-reset), multi-booking isolation, and trace-header pass-through.
+
+### Added — 2026-06-29
 - **One-command docker-compose stack** (M0) — `docker-compose up` brings the full
   demo online: NATS JetStream (broker), OTel Collector (OTLP/HTTP + gRPC receiver,
   Prometheus exporter for RED metrics, OTLP→Tempo export for traces), Grafana Tempo
