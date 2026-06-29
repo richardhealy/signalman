@@ -1,0 +1,218 @@
+version: '3.9'
+
+# One-command demo stack: broker + observability backend + all signalman services.
+#
+# Usage:
+#   docker compose up --build
+#
+# Booking a room:
+#   curl -s -X POST http://localhost:3000/bookings \
+#     -H 'Content-Type: application/json' \
+#     -d '{"sku":"ROOM-101","quantity":1,"amount":15000}' | jq .
+#
+# Check booking status (replace <id>):
+#   curl -s http://localhost:3000/bookings/<id> | jq .
+#
+# Open Grafana: http://localhost:3001  (anonymous admin, no login needed)
+# Open Tempo:   http://localhost:3200  (or via Grafana's Explore → Tempo)
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.6.0
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./docker/tempo.yaml:/etc/tempo/config.yaml:ro
+      - tempo-data:/tmp/tempo
+    ports:
+      - "3200:3200"
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.107.0
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./docker/otel-collector.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    depends_on:
+      - tempo
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+    volumes:
+      - ./docker/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./docker/grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - tempo
+      - otel-collector
+    restart: unless-stopped
+
+  # ── Signalman services ─────────────────────────────────────────────────────
+
+  inventory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/inventory/services/inventory/src/main.js
+    environment:
+      INVENTORY_GRPC_URL: "0.0.0.0:50051"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
+  payments:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/payments/services/payments/src/main.js
+    environment:
+      PAYMENTS_GRPC_URL: "0.0.0.0:50052"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
+  supplier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/supplier/services/supplier/src/main.js
+    environment:
+      SUPPLIER_GRPC_URL: "0.0.0.0:50053"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      SUPPLIER_LATENCY_MS: "200"
+      SUPPLIER_REJECT_RATE: "0.1"
+      SUPPLIER_FAILURE_RATE: "0.05"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
+  ledger:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/ledger/services/ledger/src/main.js
+    environment:
+      LEDGER_GRPC_URL: "0.0.0.0:50054"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/coordinator/services/coordinator/src/main.js
+    environment:
+      COORDINATOR_GRPC_URL: "0.0.0.0:50050"
+      INVENTORY_GRPC_URL: "inventory:50051"
+      PAYMENTS_GRPC_URL: "payments:50052"
+      SUPPLIER_GRPC_URL: "supplier:50053"
+      LEDGER_GRPC_URL: "ledger:50054"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on:
+      - inventory
+      - payments
+      - supplier
+      - ledger
+      - otel-collector
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/gateway/services/gateway/src/main.js
+    environment:
+      PORT: "3000"
+      COORDINATOR_GRPC_URL: "coordinator:50050"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - coordinator
+      - otel-collector
+    restart: unless-stopped
+
+  notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/notifier/services/notifier/src/main.js
+    environment:
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      NOTIFIER_LATENCY_MS: "50"
+      NOTIFIER_FAILURE_RATE: "0"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
+  reconciler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/services/reconciler/services/reconciler/src/main.js
+    environment:
+      RECONCILER_INTERVAL_MS: "30000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+
+volumes:
+  tempo-data:
+  grafana-data:

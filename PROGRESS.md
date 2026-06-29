@@ -8,7 +8,7 @@ legend: ☐ not started, ◐ in progress, ☑ done.
 Milestones are derived from the spec's milestone table. Each is broken into the
 concrete slices needed to call it done.
 
-### M0 — Scaffold ◐
+### M0 — Scaffold ◑
 
 - ☑ NestJS + TypeScript monorepo tooling (`nest-cli.json`, `tsconfig`, strict mode)
 - ☑ Jest test runner wired to the monorepo path aliases
@@ -149,8 +149,8 @@ concrete slices needed to call it done.
   through the subscription host onto shared brokers. The reconciler's consuming
   side — a broker-backed `SourceOfTruthGateway` projecting
   `inventory.*`/`supplier.*`/`ledger.*` — lands next
-- ☐ Postgres per service, OTel Collector
-- ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
+- ☐ Postgres per service (in-memory reference stores still active; Postgres-backed stores land with the datastore milestone)
+- ☑ **One-command `docker-compose` stack** — `docker-compose.yml` brings the whole demo online in one command. NATS 2.10 JetStream, OTel Collector (OTLP HTTP+gRPC receivers, Prometheus scrape endpoint), Grafana Tempo 2.6, and Grafana 11.2 with a pre-provisioned Tempo datasource + RED-metrics dashboard. All eight signalman services (gateway, coordinator, inventory, payments, supplier, ledger, notifier, reconciler) wire their env-based broker/collector addresses to the compose service names. A single `Dockerfile` multi-stage build compiles all services and libs from source (`npm run build`) into one image shared across all service containers (each overrides `command` to start its own service). Collector config (`docker/otel-collector.yaml`), Tempo config (`docker/tempo.yaml`), Grafana provisioning (`docker/grafana/`) committed alongside the compose file.
 
 ### M1 — Happy-path saga ◐
 
