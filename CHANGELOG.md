@@ -7,6 +7,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **Reconciler broker-backed SourceOfTruthGateway** (M6) — the reconciler now
+  receives real source-of-truth events from the producing services rather than
+  relying on pre-seeded in-memory data. `BrokerSourceOfTruthGateway` subscribes to
+  `inventory.*`, `supplier.*`, and `ledger.*` via a `BrokerSubscriptionHost` (broker
+  chosen via `createBrokerFromEnv` — in-memory by default, NATS when `BROKER=nats`)
+  and projects each delivery into a per-booking cross-source snapshot. A
+  settle-grace window (`RECONCILER_SETTLE_GRACE_MS`, default 5 s) filters out
+  bookings whose last source event is too recent, so a still-in-flight booking whose
+  saga steps are still arriving is never mistaken for a divergence — only bookings
+  whose events have gone quiet are eligible for reconciliation. The `ReconcilerModule`
+  is updated to register the concrete `BrokerSourceOfTruthGateway` (the subscription
+  host injects it directly to call `.handler()`), forward it behind the existing
+  `SOURCE_OF_TRUTH_GATEWAY` interface token (the reconciler service depends on the
+  interface, not the concrete type), and start the broker subscription on application
+  bootstrap. This closes the last gap in M6: the spec's payoff — detecting a
+  `supplier_confirmed_ledger_missing` divergence induced via real broker events — now
+  works end to end in the running stack. Unit-tested across all six event subjects
+  (inventory/supplier/ledger, both directions), the settle-grace window logic
+  (including reset on new event, clock boundary, and zero-grace variants), and trace
+  context pass-through; a module-level wiring test drives events for all three subject
+  families off a shared in-memory broker and proves the reconciler can detect the
+  headline divergence from broker-fed state.
+
+### Added — 2026-06-29
 - **One-command docker-compose stack** (M0) — `docker-compose up` brings the full
   demo online: NATS JetStream (broker), OTel Collector (OTLP/HTTP + gRPC receiver,
   Prometheus exporter for RED metrics, OTLP→Tempo export for traces), Grafana Tempo

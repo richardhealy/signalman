@@ -129,26 +129,20 @@ concrete slices needed to call it done.
   default so CI stays green) — fan-out, queue groups, redelivery, dead-letter,
   **and the headline async trace continuity** (saga step → JetStream publish →
   consume on one connected trace)
-- ◐ Per-service relay/subscription wiring (choosing the broker via env) — **both
-  sides are now wired**. `@signalman/broker` adds `createBrokerFromEnv` (env-driven
-  transport selection: in-memory reference by default, `NatsBroker` when
+- ☑ Per-service relay/subscription wiring (choosing the broker via env) — **all
+  services are now wired end to end**. `@signalman/broker` adds `createBrokerFromEnv`
+  (env-driven transport selection: in-memory reference by default, `NatsBroker` when
   `BROKER=nats`, returning the broker, its `kind`, and a `close`) and two
   framework-agnostic lifecycle hosts whose `onApplicationBootstrap`/
   `onApplicationShutdown` match NestJS's hooks structurally: `OutboxRelayHost` on
-  the producing side (start polling on boot; stop, flush once, and close on
-  shutdown) and `BrokerSubscriptionHost` on the consuming side (subscribe on boot;
-  drop the subscriptions and close the transport on shutdown). All four producing
-  legs (`inventory`, `payments`, `supplier`, `ledger`) register the relay host
-  behind a `MESSAGE_BROKER` token, and the **notifier now registers the
-  subscription host** — subscribing its `IdempotentConsumer` to `ledger.committed`
-  off the configured broker — so a booking's terminal event drives the
-  notification in a running service, not just in unit tests. Each side enables
-  shutdown hooks and runs on the booking trace. Tested at the lib level (env
-  selection, both host lifecycles) and with module-level tests driving a real
-  `inventory.held` event through the relay host and a real `ledger.committed` event
-  through the subscription host onto shared brokers. The reconciler's consuming
-  side — a broker-backed `SourceOfTruthGateway` projecting
-  `inventory.*`/`supplier.*`/`ledger.*` — lands next
+  the producing side and `BrokerSubscriptionHost` on the consuming side. All four
+  producing legs (`inventory`, `payments`, `supplier`, `ledger`) register the relay
+  host, the **notifier** registers the subscription host subscribing to
+  `ledger.committed`, and the **reconciler** now registers its own subscription host
+  subscribing its `BrokerSourceOfTruthGateway` handler to
+  `inventory.*`/`supplier.*`/`ledger.*` — so every source-of-truth event from the
+  producing services flows into the reconciler's cross-service snapshot in a running
+  stack
 - ☑ OTel Collector — OTLP/HTTP+gRPC receiver, batch processor, OTLP→Tempo exporter, Prometheus exporter for RED metrics
 - ☑ One-command `docker-compose` stack — all eight services + NATS JetStream + OTel Collector + Grafana Tempo + Grafana; single `Dockerfile` builds every service from the monorepo; `docker-compose up` starts the full demo; gateway exposed at `localhost:3000`, Grafana at `localhost:3001`
 
@@ -285,15 +279,19 @@ concrete slices needed to call it done.
 
 ### M6 — Reconciler ◐
 
-- ◐ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
+- ☑ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
   the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler, and
   the pure `detectDivergences` engine compares each settled booking's
   inventory/supplier/ledger states against the consistency invariants. The
   comparison, the scheduler, the findings store, and the trace linkage are built
-  and unit-tested against the in-memory `SourceOfTruthGateway` reference; the
-  broker/Postgres-backed gateway that feeds it real per-service state (subscribing
-  to `inventory.*`/`supplier.*`/`ledger.*`) lands with the datastore/broker
-  milestones
+  and unit-tested end to end. The **broker-backed `SourceOfTruthGateway`**
+  (`BrokerSourceOfTruthGateway`) is now built and wired: it subscribes to
+  `inventory.*`, `supplier.*`, and `ledger.*` via a `BrokerSubscriptionHost`,
+  projects each event into a per-booking cross-source snapshot, and applies a
+  settle-grace window (`RECONCILER_SETTLE_GRACE_MS`, default 5 s) so in-flight
+  bookings are never reconciled before their saga completes. The in-memory
+  findings store remains for now; the Postgres-backed store lands with the
+  datastore milestone behind the same `FINDING_REPOSITORY` token
 - ☑ Divergence findings linked to the originating booking trace — each new
   `DivergenceFinding` opens a `reconcile.divergence` span carrying a span link to
   the booking's trace context (lifted from the snapshot) and stamps the finding's
