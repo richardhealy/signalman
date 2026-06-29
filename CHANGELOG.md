@@ -7,6 +7,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **Broker-backed `SourceOfTruthGateway` for the reconciler** (M6 + M3 fan-out
+  span links) — the reconciler now operates on **live broker events** rather than
+  the static in-memory stub, closing out the core of M6 and completing M3's
+  fan-out span-link item. A new `BrokerSourceOfTruthGateway` subscribes to
+  `inventory.*`, `supplier.*`, and `ledger.*` via a `BrokerSubscriptionHost` and
+  builds per-booking cross-source projections as events arrive: `inventory.held` /
+  `.released` → inventory state, `supplier.confirmed` / `.cancelled` → supplier
+  state, `ledger.committed` / `.reversed` → ledger state. A configurable
+  settle-grace window (`RECONCILER_SETTLE_GRACE_MS`, default 5 s) keeps the
+  reconciler from flagging in-flight sagas as divergent — a booking is only returned
+  from `collectSettled` once its last event is older than the grace window. The
+  first trace context seen for a booking is pinned so any divergence finding links
+  straight back to the originating booking trace. Each consumed event emits a
+  **CONSUMER span with a span link** (not parent-child) to the producer's trace —
+  the OTel messaging-semconv fan-out pattern, which models the reality that the
+  reconciler and notifier are *independent* consumers of the same events rather than
+  a linear chain. The `ReconcilerModule` now wires the gateway and the
+  `BrokerSubscriptionHost` (broker chosen by `createBrokerFromEnv`); tested across
+  15 new cases covering projection building, settle-grace, trace capture, and
+  span-link verification.
+
+### Added — 2026-06-29
 - **One-command docker-compose stack** (M0) — `docker-compose up` brings the full
   demo online: NATS JetStream (broker), OTel Collector (OTLP/HTTP + gRPC receiver,
   Prometheus exporter for RED metrics, OTLP→Tempo export for traces), Grafana Tempo

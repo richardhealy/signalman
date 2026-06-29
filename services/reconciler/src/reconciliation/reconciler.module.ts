@@ -2,27 +2,42 @@
  * Wiring for the reconciler — the periodic comparison of the sources of truth.
  *
  * It binds a {@link ReconciliationScheduler} that drives a {@link ReconcilerService}
- * over the in-memory {@link SourceOfTruthGateway} and {@link DivergenceFindingRepository}
- * reference implementations. The interval is read from the environment so the demo
- * can reconcile more or less aggressively without code changes. The
- * broker/Postgres-backed gateway and findings store land with the datastore and
- * broker milestones, swapped in behind the same {@link SOURCE_OF_TRUTH_GATEWAY} and
- * {@link FINDING_REPOSITORY} tokens.
+ * over a {@link BrokerSourceOfTruthGateway} that subscribes to
+ * `inventory.*`/`supplier.*`/`ledger.*` via a {@link BrokerSubscriptionHost} and
+ * builds per-booking cross-source projections in real time. The broker is chosen
+ * from the environment ({@link createBrokerFromEnv}): in-memory for tests and the
+ * single-process demo, NATS JetStream when `BROKER=nats`. The interval and settle-grace
+ * window are read from the environment so the demo can tune reconciliation aggressiveness
+ * without code changes. The in-memory {@link InMemoryDivergenceFindingRepository}
+ * holds findings for now; a Postgres-backed store swaps in behind the same
+ * {@link FINDING_REPOSITORY} token with the datastore milestone.
  */
 import { Module } from '@nestjs/common';
+import {
+  BrokerSubscriptionHost,
+  createBrokerFromEnv,
+  type BrokerFromEnvResult,
+} from '@signalman/broker';
+import {
+  BrokerSourceOfTruthGateway,
+  type BrokerSourceOfTruthGatewayOptions,
+} from './broker-source-gateway';
 import {
   InMemoryDivergenceFindingRepository,
   type DivergenceFindingRepository,
 } from './finding-repository';
 import { ReconcilerService } from './reconciler.service';
 import { ReconciliationScheduler } from './scheduler';
-import { InMemorySourceOfTruthGateway, type SourceOfTruthGateway } from './source-gateway';
+import { type SourceOfTruthGateway } from './source-gateway';
 
 /** DI token for the {@link SourceOfTruthGateway} the reconciler reads settled bookings from. */
 export const SOURCE_OF_TRUTH_GATEWAY = Symbol('SOURCE_OF_TRUTH_GATEWAY');
 
 /** DI token for the {@link DivergenceFindingRepository} the reconciler records findings in. */
 export const FINDING_REPOSITORY = Symbol('FINDING_REPOSITORY');
+
+/** DI token for the {@link BrokerFromEnvResult} the subscription host consumes from. */
+export const MESSAGE_BROKER = Symbol('MESSAGE_BROKER');
 
 /** Read a positive integer from the environment, falling back when unset or invalid. */
 function envInt(name: string, fallback: number): number {
@@ -36,9 +51,28 @@ function envInt(name: string, fallback: number): number {
 
 @Module({
   providers: [
+    { provide: MESSAGE_BROKER, useFactory: (): Promise<BrokerFromEnvResult> => createBrokerFromEnv() },
     {
       provide: SOURCE_OF_TRUTH_GATEWAY,
-      useFactory: (): SourceOfTruthGateway => new InMemorySourceOfTruthGateway(),
+      useFactory: (): BrokerSourceOfTruthGateway => {
+        const options: BrokerSourceOfTruthGatewayOptions = {
+          settleGraceMs: envInt('RECONCILER_SETTLE_GRACE_MS', 5_000),
+        };
+        return new BrokerSourceOfTruthGateway(options);
+      },
+    },
+    {
+      provide: BrokerSubscriptionHost,
+      useFactory: (
+        gateway: BrokerSourceOfTruthGateway,
+        broker: BrokerFromEnvResult,
+      ): BrokerSubscriptionHost =>
+        new BrokerSubscriptionHost({
+          broker: broker.broker,
+          subscriptions: gateway.subscriptions(),
+          close: broker.close,
+        }),
+      inject: [SOURCE_OF_TRUTH_GATEWAY, MESSAGE_BROKER],
     },
     {
       provide: FINDING_REPOSITORY,

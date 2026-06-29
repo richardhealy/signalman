@@ -244,10 +244,12 @@ concrete slices needed to call it done.
   in-memory reference: with `NatsBroker` in the middle the same three spans still
   form one connected trace. The external supplier/PSP CLIENT hops are already
   span-shaped within their legs
-- ◐ Span links for fan-out (one event, many consumers) — the broker delivers
-  fan-out (every matching subscription gets a copy; queue groups load-balance),
-  so the substrate exists; emitting `span links` on the fan-out consume spans
-  is still to do
+- ☑ Span links for fan-out (one event, many consumers) — the reconciler's
+  `BrokerSourceOfTruthGateway` implements the OTel messaging semconv fan-out
+  pattern: each CONSUMER span carries a **span link** to the producer's span
+  rather than making the producer the parent, so multiple independent consumers
+  of the same event (e.g. notifier + reconciler both consuming `ledger.*`) are
+  correctly linked without falsely sharing a parent-child chain
 - ◐ Spans align to OTel RPC + messaging semantic conventions — both sides of the
   gRPC hop now carry `rpc.system`/`rpc.service`/`rpc.method` (CLIENT and SERVER);
   the messaging-semconv check lands with the broker
@@ -285,15 +287,19 @@ concrete slices needed to call it done.
 
 ### M6 — Reconciler ◐
 
-- ◐ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
-  the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler, and
-  the pure `detectDivergences` engine compares each settled booking's
-  inventory/supplier/ledger states against the consistency invariants. The
-  comparison, the scheduler, the findings store, and the trace linkage are built
-  and unit-tested against the in-memory `SourceOfTruthGateway` reference; the
-  broker/Postgres-backed gateway that feeds it real per-service state (subscribing
-  to `inventory.*`/`supplier.*`/`ledger.*`) lands with the datastore/broker
-  milestones
+- ☑ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
+  the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler over
+  a live **`BrokerSourceOfTruthGateway`** that subscribes to `inventory.*`,
+  `supplier.*`, and `ledger.*` off the configured broker and builds per-booking
+  cross-source projections in real time. A settle-grace window (`RECONCILER_SETTLE_GRACE_MS`,
+  default 5 s) prevents in-flight bookings from being flagged as divergent; the
+  first trace context seen for a booking is pinned so findings link back to the
+  originating trace. Every consumed event opens a **CONSUMER span with a span
+  link** (fan-out pattern) to the producer's trace. The `BrokerSubscriptionHost`
+  establishes the three subscriptions on bootstrap and tears them down on shutdown;
+  the broker is chosen via `createBrokerFromEnv` (in-memory default, NATS when
+  `BROKER=nats`). Unit-tested end to end: projection, settle-grace, span links,
+  multi-booking tracking, and missing-bookingId skip
 - ☑ Divergence findings linked to the originating booking trace — each new
   `DivergenceFinding` opens a `reconcile.divergence` span carrying a span link to
   the booking's trace context (lifted from the snapshot) and stamps the finding's

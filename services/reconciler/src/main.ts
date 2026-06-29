@@ -11,10 +11,11 @@ import { ReconciliationScheduler } from './reconciliation/scheduler';
  * periodic background job — so it runs as a Nest application context rather than a
  * server: telemetry starts first, then the providers initialise, then the
  * {@link ReconciliationScheduler} starts running passes on its interval. The
- * scheduler's interval timer also keeps the event loop alive (SIGINT/SIGTERM still
- * terminate it as usual). The in-memory source gateway it reads is empty until the
- * broker/datastore-backed gateway lands, so passes are no-ops for now — but the
- * cadence, the comparison engine, and the trace-linked findings are all live.
+ * {@link BrokerSubscriptionHost} establishes subscriptions to `inventory.*`,
+ * `supplier.*`, and `ledger.*` on bootstrap so the source-of-truth gateway builds
+ * live per-booking projections from the real event stream. Shutdown hooks are
+ * enabled so the subscription and broker close cleanly on SIGTERM/SIGINT; the
+ * scheduler's interval timer keeps the event loop alive between passes.
  */
 async function bootstrap(): Promise<void> {
   startTelemetry({ serviceName: 'reconciler', serviceVersion: '0.1.0' });
@@ -26,7 +27,7 @@ async function bootstrap(): Promise<void> {
   scheduler.start();
 
   Logger.log(
-    'reconciler ready (periodic reconciliation; source gateway wired to live stores with the datastore/broker milestone)',
+    'reconciler ready — subscribed to inventory.*/supplier.*/ledger.* for live source-of-truth projection',
     'Bootstrap',
   );
 }
