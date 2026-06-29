@@ -37,3 +37,8 @@ export {
   OutboxRelayHost,
   type OutboxRelayHostOptions,
 } from './relay-host';
+export {
+  BrokerSubscriptionHost,
+  type BrokerSubscription,
+  type BrokerSubscriptionHostOptions,
+} from './subscription-host';

@@ -73,10 +73,15 @@ concrete slices needed to call it done.
     the inbox skips a redelivered message id, and `NotifierService` notifies each
     booking at most once — so neither redelivery double-sends; a provider outage
     rethrows for NACK without recording. Terminal consumer, so it keeps a
-    notification source-of-truth record but stages no outbox event. Unit-tested
-    end to end (process-once, redelivery, two-layer dedup, trace continuation with
-    the provider hop nested under the consume span, NACK-on-outage) and verified to
-    boot
+    notification source-of-truth record but stages no outbox event. **Now wired to
+    the broker**: the module registers a `BrokerSubscriptionHost`
+    (§`@signalman/broker`) that subscribes the consumer to `ledger.committed` off
+    the configured broker on application bootstrap, so the terminal event drives the
+    notification in a running service. Unit-tested end to end (process-once,
+    redelivery, two-layer dedup, trace continuation with the provider hop nested
+    under the consume span, NACK-on-outage), plus a module-level wiring test driving
+    a real `ledger.committed` event through the registered host onto a shared broker
+    (notified once across a redelivery), and verified to boot subscribed
   - ☑ `reconciler` — the periodic comparison of the sources of truth. Boots as a
     standalone Nest application context (a background job, no synchronous gRPC/HTTP
     surface); a `ReconciliationScheduler` runs `ReconcilerService.runOnce` on an
@@ -124,20 +129,26 @@ concrete slices needed to call it done.
   default so CI stays green) — fan-out, queue groups, redelivery, dead-letter,
   **and the headline async trace continuity** (saga step → JetStream publish →
   consume on one connected trace)
-- ◐ Per-service relay/subscription wiring (choosing the broker via env) — the
-  **producing side is now wired**. `@signalman/broker` adds `createBrokerFromEnv`
-  (env-driven transport selection: in-memory reference by default, `NatsBroker`
-  when `BROKER=nats`, returning the broker, its `kind`, and a `close`) and
-  `OutboxRelayHost` (a framework-agnostic relay lifecycle whose
-  `onApplicationBootstrap`/`onApplicationShutdown` match NestJS's hooks
-  structurally — start polling on boot; stop, flush once, and close the transport
-  on shutdown). All four producing legs (`inventory`, `payments`, `supplier`,
-  `ledger`) register the host behind a `MESSAGE_BROKER` token and enable shutdown
-  hooks, so their staged events now actually drain to the broker on the booking
-  trace. Tested at the lib level (env selection, host lifecycle) and with a
-  module-level test driving a real `inventory.held` event through the wired host
-  onto a shared broker. The consuming-side subscriptions (notifier, reconciler)
-  land next
+- ◐ Per-service relay/subscription wiring (choosing the broker via env) — **both
+  sides are now wired**. `@signalman/broker` adds `createBrokerFromEnv` (env-driven
+  transport selection: in-memory reference by default, `NatsBroker` when
+  `BROKER=nats`, returning the broker, its `kind`, and a `close`) and two
+  framework-agnostic lifecycle hosts whose `onApplicationBootstrap`/
+  `onApplicationShutdown` match NestJS's hooks structurally: `OutboxRelayHost` on
+  the producing side (start polling on boot; stop, flush once, and close on
+  shutdown) and `BrokerSubscriptionHost` on the consuming side (subscribe on boot;
+  drop the subscriptions and close the transport on shutdown). All four producing
+  legs (`inventory`, `payments`, `supplier`, `ledger`) register the relay host
+  behind a `MESSAGE_BROKER` token, and the **notifier now registers the
+  subscription host** — subscribing its `IdempotentConsumer` to `ledger.committed`
+  off the configured broker — so a booking's terminal event drives the
+  notification in a running service, not just in unit tests. Each side enables
+  shutdown hooks and runs on the booking trace. Tested at the lib level (env
+  selection, both host lifecycles) and with module-level tests driving a real
+  `inventory.held` event through the relay host and a real `ledger.committed` event
+  through the subscription host onto shared brokers. The reconciler's consuming
+  side — a broker-backed `SourceOfTruthGateway` projecting
+  `inventory.*`/`supplier.*`/`ledger.*` — lands next
 - ☐ Postgres per service, OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
@@ -154,9 +165,10 @@ concrete slices needed to call it done.
   started from outside the system
 - ◐ Coordinator drives `hold → authorize → confirm → capture → commit` over gRPC
   (verified end to end against the four live leg services); the async `notify`
-  step is implemented in the `notifier` service, which consumes `ledger.committed`
-  and notifies the customer — the broker that delivers that event between the two
-  lands with the broker milestone
+  step runs in the `notifier` service, which now **subscribes to `ledger.committed`
+  off the configured broker** (`BrokerSubscriptionHost`) and notifies the customer
+  — so the saga's tail is wired end to end over the broker, in-process under the
+  in-memory default and cross-service under `BROKER=nats`
 - ◐ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
   partner confirmations, wrapping a simulated external partner; ledger owns the
@@ -178,8 +190,10 @@ concrete slices needed to call it done.
   done**: each producing leg registers an `OutboxRelayHost` (broker chosen via
   `createBrokerFromEnv`) that drains its outbox onto the broker on application
   bootstrap and tears down on shutdown — so staged events actually publish in a
-  running service, not just in lib tests. The Postgres-backed `OutboxStore` and
-  the consuming-side subscriptions land next
+  running service, not just in lib tests. The **first consuming-side subscription
+  is now wired too**: the notifier registers a `BrokerSubscriptionHost` that
+  subscribes its idempotent consumer to `ledger.committed`. The Postgres-backed
+  `OutboxStore` and the reconciler's broker-backed source gateway land next
 - ☑ Transactional staging (the "transactional" in transactional outbox) —
   `runInTransaction` threads a `UnitOfWork` through a service's business-state
   write and the outbox `add` it accompanies so the two **commit together or not
@@ -262,8 +276,12 @@ concrete slices needed to call it done.
   integration test drives a duplicate delivery (→ processed once, second tagged a
   duplicate) and a NACK (handler throws → broker redelivers → reprocessed) through
   the consumer, proving effectively-once over at-least-once delivery rather than
-  in isolation. The Postgres-backed `InboxStore` and the remaining services'
-  subscriptions land with the services and the broker transport
+  in isolation. The notifier now **runs this over the broker in the service
+  itself**: a `BrokerSubscriptionHost` subscribes the consumer to
+  `ledger.committed`, and a module-level wiring test drives a redelivered event
+  through the registered host onto a shared broker and asserts the customer is told
+  exactly once. The Postgres-backed `InboxStore` and the reconciler's subscription
+  land with the datastore and the reconciler's source gateway
 
 ### M6 — Reconciler ◐
 

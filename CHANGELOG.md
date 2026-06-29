@@ -7,6 +7,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **Notifier broker subscription** — the consuming side of the broker is now wired
+  in a service, the mirror of the producing legs' outbox relay. `@signalman/broker`
+  adds `BrokerSubscriptionHost`, the consume-side sibling of `OutboxRelayHost`: it
+  owns a set of subscriptions over a `MessageBroker`, **establishing them on
+  `onApplicationBootstrap`** and on `onApplicationShutdown` **dropping them and
+  closing the transport**. Those method names match NestJS's lifecycle interfaces
+  structurally, so the library stays framework-agnostic while a service registers
+  the host as a provider and Nest drives it; the host owns subscription *lifecycle*,
+  not consume *semantics*, so each handler is an ordinary broker handler (a throw
+  NACKs the message). The **notifier registers it**, behind a `MESSAGE_BROKER` token
+  (broker chosen via `createBrokerFromEnv`) and with shutdown hooks enabled,
+  subscribing its `BookingNotificationConsumer` to `ledger.committed`; a small
+  `subscription.ts` seam bridges a delivered `BrokerMessage` to the consumer's
+  `DeliveredEvent` and lets a provider outage propagate so the broker redelivers. So
+  a booking's terminal `ledger.committed` event now actually drives the customer
+  notification in a running service — closing the saga's `… -> notify` tail end to
+  end over the broker (in-process under the in-memory default, cross-service under
+  `BROKER=nats`) rather than only in unit tests. Covered by `BrokerSubscriptionHost`
+  lifecycle tests (subscribe/unsubscribe/close, idempotent start, NACK redelivery),
+  the bridge/handler unit tests (mapping + NACK propagation), and a module-level
+  wiring test that drives a real `ledger.committed` event — and a redelivery of it —
+  through the registered host onto a shared broker, asserting the customer is told
+  exactly once; the notifier is verified to boot subscribed. The reconciler's
+  consuming side (a broker-backed `SourceOfTruthGateway`) is the remaining
+  subscription, landing with the reconciler's source gateway.
 - **Per-service outbox relay wiring** — the producing services now actually drain
   their outbox onto a broker, closing the gap where every leg *staged* events but
   nothing published them. Two new pieces in `@signalman/broker` make it uniform:

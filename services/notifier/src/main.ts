@@ -9,24 +9,26 @@ import { AppModule } from './app.module';
  * The notifier is a pure **async consumer** — it has no synchronous gRPC/HTTP
  * surface, so it runs as a Nest application context rather than a server: telemetry
  * starts first, then the providers (the consumer, service, channel, inbox)
- * initialise, which also validates the wiring. With no transport attached yet
- * nothing holds the event loop open, so a keep-alive timer keeps the host resident
- * (SIGINT/SIGTERM still terminate it as usual) — this is where the broker
- * subscription that feeds {@link BookingNotificationConsumer} lands with the broker
- * milestone, replacing the placeholder timer with real work.
+ * initialise. The {@link BrokerSubscriptionHost} the module registers subscribes the
+ * {@link BookingNotificationConsumer} to `ledger.committed` on application bootstrap,
+ * so a booking's terminal event drives the notification; shutdown hooks are enabled
+ * so it drops the subscription and closes the transport on `SIGTERM`/`SIGINT`.
+ *
+ * With the NATS transport the broker connection holds the event loop open; the
+ * in-memory reference (the default) does not, so a keep-alive timer keeps the host
+ * resident either way. Real cross-service delivery needs `BROKER=nats` so every
+ * service shares one broker — under the in-memory default each process owns its own.
  */
 async function bootstrap(): Promise<void> {
   startTelemetry({ serviceName: 'notifier', serviceVersion: '0.1.0' });
 
-  await NestFactory.createApplicationContext(AppModule);
+  const app = await NestFactory.createApplicationContext(AppModule);
+  app.enableShutdownHooks();
 
-  Logger.log(
-    'notifier ready (event consumer; broker subscription lands with the broker milestone)',
-    'Bootstrap',
-  );
+  Logger.log('notifier ready (subscribed to ledger.committed)', 'Bootstrap');
 
-  // No transport holds the event loop open yet; keep the host resident until it is
-  // signalled to stop. A later milestone swaps this for the broker subscription.
+  // The in-memory broker holds nothing open; keep the host resident until signalled
+  // to stop (SIGINT/SIGTERM still terminate it, running the shutdown hooks).
   setInterval(() => undefined, 60_000);
 }
 

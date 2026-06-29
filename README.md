@@ -53,15 +53,19 @@ now in place too: a **NATS JetStream adapter** (`NatsBroker`) implements the sam
 `MessageBroker` boundary and is verified end to end against a live JetStream
 server — fan-out, queue-group load-balancing, at-least-once redelivery,
 dead-lettering, and the headline async trace continuity all hold with NATS in the
-middle. The **producing services are now wired to the broker**: each leg
+middle. **Both sides of the broker are now wired in the services**: each producing leg
 (`inventory`, `payments`, `supplier`, `ledger`) runs an `OutboxRelayHost` that
 drains its outbox onto a broker chosen from the environment
 (`createBrokerFromEnv` — the in-memory reference by default, NATS when
-`BROKER=nats`), so staged events actually publish in a running service rather than
-only in library tests. The consuming-side subscriptions (notifier, reconciler),
-Postgres per service, and the OTel Collector/Tempo/Grafana stack — which fold
-these in-process proofs onto the rest of the real infrastructure — are the
-upcoming milestones.
+`BROKER=nats`), and on the consuming side the **notifier now runs a
+`BrokerSubscriptionHost`** that subscribes its idempotent consumer to
+`ledger.committed` off the same configured broker — so a booking's terminal event
+actually drives the customer notification in a running service, not only in library
+tests, on the booking trace. The reconciler's consuming side (a broker-backed
+`SourceOfTruthGateway` projecting `inventory.*`/`supplier.*`/`ledger.*`), Postgres
+per service, and the OTel Collector/Tempo/Grafana stack — which fold these
+in-process proofs onto the rest of the real infrastructure — are the upcoming
+milestones.
 
 ## Stack
 
@@ -373,25 +377,40 @@ It exercises fan-out, queue-group load-balancing, NACK redelivery, dead-letterin
 and the spec's headline async half — the saga step → JetStream publish → consume
 spans on **one connected trace**, now with NATS in the middle.
 
-#### Per-service wiring (`createBrokerFromEnv`, `OutboxRelayHost`)
+#### Per-service wiring (`createBrokerFromEnv`, `OutboxRelayHost`, `BrokerSubscriptionHost`)
 
 A producing service stages its events transactionally, but nothing leaves the
-service until a relay drains those rows onto a broker. Two helpers make that
-wiring uniform and env-driven, so the same code serves the unit suite, a
+service until a relay drains those rows onto a broker; a consuming service needs the
+mirror — a subscription that delivers each event to a handler. Three helpers make
+that wiring uniform and env-driven, so the same code serves the unit suite, a
 single-process demo, and the docker-compose stack:
 
 ```ts
-import { createBrokerFromEnv, OutboxRelayHost } from '@signalman/broker';
+import {
+  createBrokerFromEnv,
+  OutboxRelayHost,
+  BrokerSubscriptionHost,
+} from '@signalman/broker';
 
 // Selected from the environment: the in-memory reference by default, the NATS
 // JetStream adapter when BROKER=nats (servers from NATS_URL / NATS_SERVERS).
 const broker = await createBrokerFromEnv();
 
+// Producing side — drain the outbox onto the broker.
 const relayHost = new OutboxRelayHost({
   store: outboxStore,            // the same outbox the service stages into
   broker: broker.broker,
   messagingSystem: broker.kind,  // 'memory' | 'nats' → the messaging.system attribute
   close: broker.close,           // drains/closes the transport on shutdown
+});
+
+// Consuming side — subscribe a handler to the events it reacts to.
+const subscriptionHost = new BrokerSubscriptionHost({
+  broker: broker.broker,
+  subscriptions: [
+    { subjects: 'ledger.committed', handler: (message) => consumer.consume(/* … */) },
+  ],
+  close: broker.close,           // a service uses one host's close, not both
 });
 ```
 
@@ -400,13 +419,20 @@ case-insensitive, `nats` to opt in; an unrecognised value fails fast) and return
 the broker, its `kind`, and a `close`. `OutboxRelayHost` owns the relay's
 lifecycle: it composes an `OutboxRelay` over the store and a `BrokerPublisher` on
 the broker, **starts polling on `onApplicationBootstrap`**, and on
-`onApplicationShutdown` **stops, flushes once, and closes the transport**. Those
-method names match NestJS's lifecycle interfaces structurally, so the library
-stays framework-agnostic while a service registers the host as a provider and Nest
-drives it. All four producing legs register it behind a `MESSAGE_BROKER` token and
-enable shutdown hooks, so their staged events drain to the broker on the booking
-trace; set `BROKER=nats` (with the docker-compose stack) for real cross-service
-delivery, or leave it unset for the in-process default.
+`onApplicationShutdown` **stops, flushes once, and closes the transport**.
+`BrokerSubscriptionHost` is its consume-side mirror: it **establishes its
+subscriptions on `onApplicationBootstrap`** and on `onApplicationShutdown` **drops
+them and closes the transport**. The host owns subscription *lifecycle*, not consume
+*semantics* — each handler is an ordinary broker handler, so one that throws NACKs
+its message (route deliveries through the idempotent inbox for effectively-once).
+Both hosts' method names match NestJS's lifecycle interfaces structurally, so the
+library stays framework-agnostic while a service registers the host as a provider
+and Nest drives it. All four producing legs register the relay host behind a
+`MESSAGE_BROKER` token, and the **notifier registers the subscription host** —
+subscribing its idempotent consumer to `ledger.committed`; each enables shutdown
+hooks, so events flow on the booking trace. Set `BROKER=nats` (with the
+docker-compose stack) for real cross-service delivery, or leave it unset for the
+in-process default.
 
 ### `services/inventory`
 
@@ -575,11 +601,17 @@ notifier is not a synchronous gRPC participant; it is a pure **event consumer**.
 When the booking reaches its financial terminal state it reacts to the
 `ledger.committed` event off the broker and tells the customer.
 
+- A `BrokerSubscriptionHost` (§`@signalman/broker`) subscribes the consumer to
+  `ledger.committed` off the configured broker on application bootstrap, and drops
+  the subscription and closes the transport on shutdown — the consume-side mirror of
+  the producing legs' `OutboxRelayHost`, so the saga's tail is wired end to end over
+  the broker.
 - A `BookingNotificationConsumer` wraps `@signalman/inbox`'s `IdempotentConsumer`
   (dedup namespace `notifier`). It continues the booking's trace — the consume
   span is a CONSUMER child of the publisher's span, so the notification is on the
   *same* trace as the booking — and dedups by message id, so the broker's
-  at-least-once delivery becomes effectively-once processing.
+  at-least-once delivery becomes effectively-once processing. A provider outage
+  propagates out of the handler, so the broker NACKs and redelivers.
 - A `NotifierService` does the work, **idempotently per booking**: a booking is
   notified at most once, so a second message about the same booking (a distinct
   id the inbox lets through) still sends nothing twice.
@@ -594,8 +626,8 @@ redelivers — nothing is recorded, so the redelivery genuinely retries. Being t
 terminal consumer, the notifier keeps a notification source-of-truth record (a
 fourth thing the reconciler can check — *was the customer actually told?*) but
 stages no outbox event. The in-memory notification and inbox stores are reference
-implementations; the Postgres-backed stores and the broker subscription that feeds
-the consumer land with later milestones.
+implementations; the Postgres-backed stores land with the datastore milestone,
+behind the same DI tokens.
 
 ### `services/reconciler`
 
@@ -755,15 +787,20 @@ by name.
 ### Run the notifier service
 
 ```bash
-npm run start:notifier          # boots the consumer host; logs "notifier ready"
+npm run start:notifier          # boots the consumer host; logs "notifier ready (subscribed to ledger.committed)"
+BROKER=nats npm run start:notifier   # subscribe over the NATS JetStream transport
 ```
 
 The notifier is a pure event consumer with no synchronous surface, so it boots as
-an application context and stays resident awaiting messages. The broker
-subscription that delivers `ledger.committed` to it lands with the broker
-milestone; until then its behaviour — consume-once, redelivery-safe, trace-
-continuing, NACK-on-outage — is exercised by the unit tests. Tune the simulated
-provider with `NOTIFIER_LATENCY_MS` and `NOTIFIER_FAILURE_RATE`.
+an application context and stays resident awaiting messages. On bootstrap a
+`BrokerSubscriptionHost` subscribes it to `ledger.committed` off the configured
+broker (`createBrokerFromEnv` — the in-memory reference by default, NATS when
+`BROKER=nats`); each delivery flows through the idempotent consumer
+(consume-once, redelivery-safe, trace-continuing, NACK-on-outage). Under the
+in-memory default each process owns its own broker, so real cross-service delivery
+from the producing legs needs `BROKER=nats` (the docker-compose stack) so every
+service shares one broker. Tune the simulated provider with `NOTIFIER_LATENCY_MS`
+and `NOTIFIER_FAILURE_RATE`.
 
 ### Run the reconciler service
 
