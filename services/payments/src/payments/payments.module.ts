@@ -3,17 +3,26 @@
  *
  * It binds the gRPC {@link PaymentsController} to a {@link PaymentsService}
  * backed by the in-memory payment repository and outbox store, calling a
- * {@link SimulatedPsp} for the external boundary. The in-memory stores are the
- * reference implementations the `@signalman/*` libraries ship; the
- * Postgres-backed stores (and the outbox relay that drains staged events to the
- * broker) land with the datastore and broker milestones, swapped in here behind
- * the same {@link PAYMENT_REPOSITORY}/{@link OUTBOX_STORE} tokens.
+ * {@link SimulatedPsp} for the external boundary, and runs an
+ * {@link OutboxRelayHost} that drains the staged
+ * `payment.authorized`/`.captured`/`.voided` events onto the configured broker.
+ * The broker is chosen from the environment ({@link createBrokerFromEnv} —
+ * in-memory by default, NATS when `BROKER=nats`), so the same wiring serves the
+ * unit suite and the docker-compose stack. The in-memory stores are the reference
+ * implementations the `@signalman/*` libraries ship; the Postgres-backed stores
+ * swap in here behind the same {@link PAYMENT_REPOSITORY}/{@link OUTBOX_STORE}
+ * tokens with the datastore milestone.
  *
  * The PSP's latency and failure rates are read from the environment so the demo
  * can dial divergence up or down without code changes; the defaults inject
  * enough slowness and flakiness to make the external hop interesting in a trace.
  */
 import { Module } from '@nestjs/common';
+import {
+  createBrokerFromEnv,
+  OutboxRelayHost,
+  type BrokerFromEnvResult,
+} from '@signalman/broker';
 import { InMemoryOutboxStore, type OutboxStore } from '@signalman/outbox';
 import { InMemoryPaymentRepository, type PaymentRepository } from './payment-repository';
 import { PaymentsController } from './payments.controller';
@@ -28,6 +37,9 @@ export const OUTBOX_STORE = Symbol('OUTBOX_STORE');
 
 /** DI token for the {@link Psp} boundary the service authorizes/captures through. */
 export const PSP = Symbol('PSP');
+
+/** DI token for the {@link BrokerFromEnvResult} the relay publishes onto. */
+export const MESSAGE_BROKER = Symbol('MESSAGE_BROKER');
 
 /** Read a 0–1 rate (or any number) from the environment, falling back when unset or invalid. */
 function envNumber(name: string, fallback: number): number {
@@ -61,6 +73,18 @@ function envNumber(name: string, fallback: number): number {
       useFactory: (payments: PaymentRepository, outbox: OutboxStore, psp: Psp): PaymentsService =>
         new PaymentsService({ payments, outbox, psp }),
       inject: [PAYMENT_REPOSITORY, OUTBOX_STORE, PSP],
+    },
+    { provide: MESSAGE_BROKER, useFactory: (): Promise<BrokerFromEnvResult> => createBrokerFromEnv() },
+    {
+      provide: OutboxRelayHost,
+      useFactory: (outbox: OutboxStore, broker: BrokerFromEnvResult): OutboxRelayHost =>
+        new OutboxRelayHost({
+          store: outbox,
+          broker: broker.broker,
+          messagingSystem: broker.kind,
+          close: broker.close,
+        }),
+      inject: [OUTBOX_STORE, MESSAGE_BROKER],
     },
   ],
 })

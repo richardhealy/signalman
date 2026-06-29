@@ -12,6 +12,11 @@ const GRPC_URL = process.env.SUPPLIER_GRPC_URL ?? '0.0.0.0:50053';
  * Boots the supplier gRPC microservice. Telemetry starts first so spans and RED
  * metrics flow from the very first request, then the gRPC transport comes up
  * bound to the `Supplier` proto contract.
+ *
+ * Shutdown hooks are enabled so the {@link OutboxRelayHost} the module registers
+ * stops its relay, flushes once, and closes the broker on `SIGTERM`/`SIGINT`. The
+ * relay starts on application bootstrap, draining staged `supplier.*` events onto
+ * the configured broker.
  */
 async function bootstrap(): Promise<void> {
   startTelemetry({ serviceName: 'supplier', serviceVersion: '0.1.0' });
@@ -25,6 +30,7 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  app.enableShutdownHooks();
   await app.listen();
   Logger.log(`supplier gRPC listening on ${GRPC_URL}`, 'Bootstrap');
 }

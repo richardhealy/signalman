@@ -12,6 +12,11 @@ const GRPC_URL = process.env.LEDGER_GRPC_URL ?? '0.0.0.0:50054';
  * Boots the ledger gRPC microservice. Telemetry starts first so spans and RED
  * metrics flow from the very first request, then the gRPC transport comes up
  * bound to the `Ledger` proto contract.
+ *
+ * Shutdown hooks are enabled so the {@link OutboxRelayHost} the module registers
+ * stops its relay, flushes once, and closes the broker on `SIGTERM`/`SIGINT`. The
+ * relay starts on application bootstrap, draining staged `ledger.*` events onto
+ * the configured broker.
  */
 async function bootstrap(): Promise<void> {
   startTelemetry({ serviceName: 'ledger', serviceVersion: '0.1.0' });
@@ -30,6 +35,7 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  app.enableShutdownHooks();
   await app.listen();
   Logger.log(`ledger gRPC listening on ${GRPC_URL}`, 'Bootstrap');
 }

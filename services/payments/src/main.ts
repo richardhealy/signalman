@@ -16,6 +16,11 @@ const GRPC_URL = process.env.PAYMENTS_GRPC_URL ?? '0.0.0.0:50052';
  * The proto loader is configured with `longs: Number` so the `uint64` amount
  * arrives as a JavaScript number — booking amounts sit far below `2^53`, so no
  * precision is lost, and the service avoids string-handling money.
+ *
+ * Shutdown hooks are enabled so the {@link OutboxRelayHost} the module registers
+ * stops its relay, flushes once, and closes the broker on `SIGTERM`/`SIGINT`. The
+ * relay starts on application bootstrap, draining staged `payment.*` events onto
+ * the configured broker.
  */
 async function bootstrap(): Promise<void> {
   startTelemetry({ serviceName: 'payments', serviceVersion: '0.1.0' });
@@ -30,6 +35,7 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  app.enableShutdownHooks();
   await app.listen();
   Logger.log(`payments gRPC listening on ${GRPC_URL}`, 'Bootstrap');
 }

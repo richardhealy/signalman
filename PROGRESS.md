@@ -123,8 +123,21 @@ concrete slices needed to call it done.
   (`nats-broker.integration.spec.ts`, run with `NATS_TEST_URL` set; skipped by
   default so CI stays green) — fan-out, queue groups, redelivery, dead-letter,
   **and the headline async trace continuity** (saga step → JetStream publish →
-  consume on one connected trace). Per-service relay/subscription wiring (choosing
-  the broker via env) lands next
+  consume on one connected trace)
+- ◐ Per-service relay/subscription wiring (choosing the broker via env) — the
+  **producing side is now wired**. `@signalman/broker` adds `createBrokerFromEnv`
+  (env-driven transport selection: in-memory reference by default, `NatsBroker`
+  when `BROKER=nats`, returning the broker, its `kind`, and a `close`) and
+  `OutboxRelayHost` (a framework-agnostic relay lifecycle whose
+  `onApplicationBootstrap`/`onApplicationShutdown` match NestJS's hooks
+  structurally — start polling on boot; stop, flush once, and close the transport
+  on shutdown). All four producing legs (`inventory`, `payments`, `supplier`,
+  `ledger`) register the host behind a `MESSAGE_BROKER` token and enable shutdown
+  hooks, so their staged events now actually drain to the broker on the booking
+  trace. Tested at the lib level (env selection, host lifecycle) and with a
+  module-level test driving a real `inventory.held` event through the wired host
+  onto a shared broker. The consuming-side subscriptions (notifier, reconciler)
+  land next
 - ☐ Postgres per service, OTel Collector
 - ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
 
@@ -161,8 +174,12 @@ concrete slices needed to call it done.
   alongside their state changes. The relay's `Publisher` now has a concrete
   implementation: `@signalman/broker`'s `BrokerPublisher` over the
   `MessageBroker` boundary (with an `InMemoryBroker` reference), so the relay
-  publishes onto an actual broker in-process. The Postgres-backed `OutboxStore`,
-  the NATS-backed broker adapter, and per-service relay wiring land next
+  publishes onto an actual broker in-process. **Per-service relay wiring is now
+  done**: each producing leg registers an `OutboxRelayHost` (broker chosen via
+  `createBrokerFromEnv`) that drains its outbox onto the broker on application
+  bootstrap and tears down on shutdown — so staged events actually publish in a
+  running service, not just in lib tests. The Postgres-backed `OutboxStore` and
+  the consuming-side subscriptions land next
 - ☑ Transactional staging (the "transactional" in transactional outbox) —
   `runInTransaction` threads a `UnitOfWork` through a service's business-state
   write and the outbox `add` it accompanies so the two **commit together or not

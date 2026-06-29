@@ -53,9 +53,15 @@ now in place too: a **NATS JetStream adapter** (`NatsBroker`) implements the sam
 `MessageBroker` boundary and is verified end to end against a live JetStream
 server — fan-out, queue-group load-balancing, at-least-once redelivery,
 dead-lettering, and the headline async trace continuity all hold with NATS in the
-middle. Postgres per service and the OTel Collector/Tempo/Grafana stack — which
-fold these in-process proofs onto the rest of the real infrastructure — and the
-per-service broker wiring are the upcoming milestones.
+middle. The **producing services are now wired to the broker**: each leg
+(`inventory`, `payments`, `supplier`, `ledger`) runs an `OutboxRelayHost` that
+drains its outbox onto a broker chosen from the environment
+(`createBrokerFromEnv` — the in-memory reference by default, NATS when
+`BROKER=nats`), so staged events actually publish in a running service rather than
+only in library tests. The consuming-side subscriptions (notifier, reconciler),
+Postgres per service, and the OTel Collector/Tempo/Grafana stack — which fold
+these in-process proofs onto the rest of the real infrastructure — are the
+upcoming milestones.
 
 ## Stack
 
@@ -367,6 +373,41 @@ It exercises fan-out, queue-group load-balancing, NACK redelivery, dead-letterin
 and the spec's headline async half — the saga step → JetStream publish → consume
 spans on **one connected trace**, now with NATS in the middle.
 
+#### Per-service wiring (`createBrokerFromEnv`, `OutboxRelayHost`)
+
+A producing service stages its events transactionally, but nothing leaves the
+service until a relay drains those rows onto a broker. Two helpers make that
+wiring uniform and env-driven, so the same code serves the unit suite, a
+single-process demo, and the docker-compose stack:
+
+```ts
+import { createBrokerFromEnv, OutboxRelayHost } from '@signalman/broker';
+
+// Selected from the environment: the in-memory reference by default, the NATS
+// JetStream adapter when BROKER=nats (servers from NATS_URL / NATS_SERVERS).
+const broker = await createBrokerFromEnv();
+
+const relayHost = new OutboxRelayHost({
+  store: outboxStore,            // the same outbox the service stages into
+  broker: broker.broker,
+  messagingSystem: broker.kind,  // 'memory' | 'nats' → the messaging.system attribute
+  close: broker.close,           // drains/closes the transport on shutdown
+});
+```
+
+`createBrokerFromEnv` reads `SIGNALMAN_BROKER`/`BROKER` (default `memory`,
+case-insensitive, `nats` to opt in; an unrecognised value fails fast) and returns
+the broker, its `kind`, and a `close`. `OutboxRelayHost` owns the relay's
+lifecycle: it composes an `OutboxRelay` over the store and a `BrokerPublisher` on
+the broker, **starts polling on `onApplicationBootstrap`**, and on
+`onApplicationShutdown` **stops, flushes once, and closes the transport**. Those
+method names match NestJS's lifecycle interfaces structurally, so the library
+stays framework-agnostic while a service registers the host as a provider and Nest
+drives it. All four producing legs register it behind a `MESSAGE_BROKER` token and
+enable shutdown hooks, so their staged events drain to the broker on the booking
+trace; set `BROKER=nats` (with the docker-compose stack) for real cross-service
+delivery, or leave it unset for the in-process default.
+
 ### `services/inventory`
 
 The first downstream saga participant — the inventory **source of truth**. It
@@ -389,9 +430,10 @@ all** — no hold without its event. The oversell guard stays eager, so a
 would-oversell write rolls the unit of work back before anything commits. Every
 gRPC handler is wrapped by `@signalman/interceptor`'s SERVER span — the inventory
 hop of the booking trace — and the staged events continue from it, so the whole
-leg hangs off one connected trace. The in-memory hold and outbox stores are
-reference implementations; the Postgres-backed stores and the relay that drains
-events to the broker land with the datastore and broker milestones.
+leg hangs off one connected trace. The module registers an `OutboxRelayHost`
+(§`@signalman/broker`) that drains those staged events onto the configured broker.
+The in-memory hold and outbox stores are reference implementations; the
+Postgres-backed stores land with the datastore milestone.
 
 ### `services/payments`
 
@@ -422,9 +464,10 @@ the payment write and its event are wrapped in `runInTransaction` so they
 **commit together or not at all**. The PSP call runs **before** the transaction —
 it is the one side effect that cannot roll back — so a rollback never leaves a
 charged PSP without a recorded payment; a retried authorize replays it
-idempotently. As with inventory, the in-memory payment and outbox stores are
-reference implementations; the Postgres-backed stores and the broker relay land
-with later milestones.
+idempotently. As with inventory, the module registers an `OutboxRelayHost` that
+drains its staged events onto the configured broker; the in-memory payment and
+outbox stores are reference implementations, and the Postgres-backed stores land
+with the datastore milestone.
 
 ### `services/supplier`
 
@@ -454,8 +497,9 @@ Each state change is paired with an outbox event (`supplier.confirmed` /
 write and its event are wrapped in `runInTransaction` so they **commit together
 or not at all**. The partner call runs **before** the transaction — the side
 effect that cannot roll back — so a retried confirm replays it idempotently. The
-in-memory confirmation and outbox stores are reference implementations; the
-Postgres-backed stores and the broker relay land with later milestones.
+module registers an `OutboxRelayHost` that drains its staged events onto the
+configured broker; the in-memory confirmation and outbox stores are reference
+implementations, and the Postgres-backed stores land with the datastore milestone.
 
 ### `services/ledger`
 
@@ -485,9 +529,10 @@ its event are wrapped in `runInTransaction` so they **commit together or not at
 all** — closing the dual-write window in the reference, not just "in Postgres
 later." Every producing leg (inventory, payments, supplier, ledger) now stages
 this way, each with a service test that pins the rollback: when the outbox `add`
-throws, the state change rolls back with it. The in-memory ledger and outbox
-stores are reference implementations; the Postgres-backed stores and the broker
-relay land with later milestones.
+throws, the state change rolls back with it. The module registers an
+`OutboxRelayHost` that drains its staged events onto the configured broker; the
+in-memory ledger and outbox stores are reference implementations, and the
+Postgres-backed stores land with the datastore milestone.
 
 ### `services/coordinator`
 

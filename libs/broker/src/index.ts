@@ -26,3 +26,14 @@ export {
   NatsBroker,
   type NatsBrokerOptions,
 } from './nats-broker';
+export {
+  createBrokerFromEnv,
+  resolveBrokerKind,
+  type BrokerFromEnvResult,
+  type BrokerKind,
+} from './broker-env';
+export {
+  DEFAULT_RELAY_POLL_MS,
+  OutboxRelayHost,
+  type OutboxRelayHostOptions,
+} from './relay-host';

@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — 2026-06-29
+- **Per-service outbox relay wiring** — the producing services now actually drain
+  their outbox onto a broker, closing the gap where every leg *staged* events but
+  nothing published them. Two new pieces in `@signalman/broker` make it uniform:
+  `createBrokerFromEnv` selects the transport from the environment — the in-memory
+  reference by default (so the unit suite and a single-process demo need no
+  infrastructure), the NATS JetStream adapter when `BROKER=nats` (servers from
+  `NATS_URL`/`NATS_SERVERS`) — returning the broker, its `kind` (also the
+  `messaging.system` span attribute), and a `close` for teardown; an unrecognised
+  value fails fast. `OutboxRelayHost` owns the relay lifecycle: it composes an
+  `OutboxRelay` over the service's `OutboxStore` and a `BrokerPublisher` on that
+  broker, starts polling on application bootstrap, and on shutdown stops, flushes
+  once, and closes the transport. Its `onApplicationBootstrap`/
+  `onApplicationShutdown` methods match NestJS's lifecycle interfaces structurally,
+  so the library stays framework-agnostic while a service registers the host as a
+  provider and Nest drives it. All four producing legs — `inventory`, `payments`,
+  `supplier`, `ledger` — register the host behind a `MESSAGE_BROKER` token and
+  enable shutdown hooks, so their staged `inventory.*`/`payment.*`/`supplier.*`/
+  `ledger.*` events now flow to the broker on the trace they were born under. The
+  relay mechanics (and trace continuity through the publish) carry their own
+  coverage in `@signalman/broker`; this increment adds unit tests for the env
+  selection and the host lifecycle, plus a module-level test that drives a real
+  `inventory.held` event from the wired `InventoryService` through the registered
+  host onto a shared broker. The consuming-side subscriptions (notifier,
+  reconciler) and the Postgres-backed outbox store land next, behind the same
+  tokens.
+
 ### Changed — 2026-06-29
 - **Transactional staging across every producing leg** — the dual-write window is
   now closed in all four event-producing services, not just the ledger. The

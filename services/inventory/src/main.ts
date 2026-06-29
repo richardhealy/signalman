@@ -12,6 +12,11 @@ const GRPC_URL = process.env.INVENTORY_GRPC_URL ?? '0.0.0.0:50051';
  * Boots the inventory gRPC microservice. Telemetry starts first so spans and
  * RED metrics flow from the very first request, then the gRPC transport comes up
  * bound to the `Inventory` proto contract.
+ *
+ * Shutdown hooks are enabled so the {@link OutboxRelayHost} the module registers
+ * stops its relay, flushes once, and closes the broker on `SIGTERM`/`SIGINT`. The
+ * relay itself starts on application bootstrap (when `listen` fires the lifecycle
+ * hooks), draining staged `inventory.*` events onto the configured broker.
  */
 async function bootstrap(): Promise<void> {
   startTelemetry({ serviceName: 'inventory', serviceVersion: '0.1.0' });
@@ -25,6 +30,7 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  app.enableShutdownHooks();
   await app.listen();
   Logger.log(`inventory gRPC listening on ${GRPC_URL}`, 'Bootstrap');
 }
