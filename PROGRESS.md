@@ -149,8 +149,8 @@ concrete slices needed to call it done.
   through the subscription host onto shared brokers. The reconciler's consuming
   side — a broker-backed `SourceOfTruthGateway` projecting
   `inventory.*`/`supplier.*`/`ledger.*` — lands next
-- ☐ Postgres per service, OTel Collector
-- ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
+- ☑ OTel Collector — OTLP/HTTP+gRPC receiver, batch processor, OTLP→Tempo exporter, Prometheus exporter for RED metrics
+- ☑ One-command `docker-compose` stack — all eight services + NATS JetStream + OTel Collector + Grafana Tempo + Grafana; single `Dockerfile` builds every service from the monorepo; `docker-compose up` starts the full demo; gateway exposed at `localhost:3000`, Grafana at `localhost:3001`
 
 ### M1 — Happy-path saga ◐
 

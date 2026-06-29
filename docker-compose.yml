@@ -1,0 +1,220 @@
+version: "3.9"
+
+# ── Signalman one-command demo stack ────────────────────────────────────────
+#
+#   docker-compose up
+#
+# Brings up:
+#   - NATS JetStream (event broker)
+#   - OTel Collector (OTLP receiver → Tempo + Prometheus)
+#   - Grafana Tempo (distributed trace backend)
+#   - Grafana (dashboards — http://localhost:3001, anonymous access)
+#   - All eight application services wired together
+#
+# To trigger a booking (and produce a trace):
+#   curl -s -X POST http://localhost:3000/bookings \
+#     -H "Content-Type: application/json" \
+#     -d '{"skuId":"SKU-1","quantity":1,"amount":100,"customerId":"c1"}' | jq .
+#
+# Open the Grafana Explore view at http://localhost:3001 to browse traces.
+# ────────────────────────────────────────────────────────────────────────────
+
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+x-broker-env: &broker-env
+  BROKER: nats
+  NATS_URL: nats://nats:4222
+
+services:
+
+  # ── Infrastructure ─────────────────────────────────────────────────────────
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./docker/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    depends_on:
+      tempo:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:13133/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./docker/tempo-config.yaml:/etc/tempo/config.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - tempo
+      - otel-collector
+
+  # ── Application services ───────────────────────────────────────────────────
+
+  inventory:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: inventory
+      INVENTORY_GRPC_URL: "0.0.0.0:50051"
+    ports:
+      - "50051:50051"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  payments:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: payments
+      PAYMENTS_GRPC_URL: "0.0.0.0:50052"
+    ports:
+      - "50052:50052"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  supplier:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: supplier
+      SUPPLIER_GRPC_URL: "0.0.0.0:50053"
+    ports:
+      - "50053:50053"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  ledger:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: ledger
+      LEDGER_GRPC_URL: "0.0.0.0:50054"
+    ports:
+      - "50054:50054"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  coordinator:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: coordinator
+      COORDINATOR_GRPC_URL: "0.0.0.0:50050"
+      INVENTORY_GRPC_URL: "inventory:50051"
+      PAYMENTS_GRPC_URL: "payments:50052"
+      SUPPLIER_GRPC_URL: "supplier:50053"
+      LEDGER_GRPC_URL: "ledger:50054"
+    ports:
+      - "50050:50050"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+      inventory:
+        condition: service_started
+      payments:
+        condition: service_started
+      supplier:
+        condition: service_started
+      ledger:
+        condition: service_started
+
+  notifier:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: notifier
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  reconciler:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: reconciler
+      RECONCILER_INTERVAL_MS: "30000"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  gateway:
+    build: .
+    image: signalman-app
+    environment:
+      <<: [*otel-env, *broker-env]
+      SERVICE_NAME: gateway
+      PORT: "3000"
+      COORDINATOR_GRPC_URL: "coordinator:50050"
+    ports:
+      - "3000:3000"
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+      coordinator:
+        condition: service_started
+
+volumes:
+  tempo-data:

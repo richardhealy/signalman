@@ -62,10 +62,34 @@ drains its outbox onto a broker chosen from the environment
 `ledger.committed` off the same configured broker — so a booking's terminal event
 actually drives the customer notification in a running service, not only in library
 tests, on the booking trace. The reconciler's consuming side (a broker-backed
-`SourceOfTruthGateway` projecting `inventory.*`/`supplier.*`/`ledger.*`), Postgres
-per service, and the OTel Collector/Tempo/Grafana stack — which fold these
-in-process proofs onto the rest of the real infrastructure — are the upcoming
-milestones.
+`SourceOfTruthGateway` projecting `inventory.*`/`supplier.*`/`ledger.*`) and Postgres
+per service are the remaining milestones.
+
+## Quick start
+
+Requires Docker and Docker Compose.
+
+```bash
+docker-compose up
+```
+
+This builds all services from the monorepo and starts the full stack: NATS
+JetStream, OTel Collector, Grafana Tempo, Grafana, and all eight application
+services. The first build takes a few minutes; subsequent starts are fast.
+
+Once all services are up, trigger a booking:
+
+```bash
+curl -s -X POST http://localhost:3000/bookings \
+  -H "Content-Type: application/json" \
+  -d '{"skuId":"SKU-1","quantity":1,"amount":100,"customerId":"c1"}' | jq .
+```
+
+The response carries a `traceId`. Open **Grafana** at
+[http://localhost:3001](http://localhost:3001), go to **Explore → Tempo**, and
+paste the trace ID to browse the connected booking trace across all six services.
+The **Signalman — Booking Platform** dashboard (under Dashboards → Signalman)
+shows RED metrics per service and a live trace search panel.
 
 ## Stack
 

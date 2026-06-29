@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **One-command docker-compose stack** (M0) — `docker-compose up` brings the full
+  demo online: NATS JetStream (broker), OTel Collector (OTLP/HTTP + gRPC receiver,
+  Prometheus exporter for RED metrics, OTLP→Tempo export for traces), Grafana Tempo
+  (trace backend), Grafana (pre-provisioned Tempo + Prometheus datasources and a
+  Signalman booking dashboard at `localhost:3001`), and all eight application services
+  wired together. A single `Dockerfile` builds any service from the monorepo via a
+  `SERVICE_NAME` env var; docker-compose uses the same image for every service,
+  setting the variable per container. Services receive `BROKER=nats`/`NATS_URL` so
+  all outbox relays and broker consumers use the shared JetStream broker, and
+  `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318` so every span and metric
+  flows through the collector to Tempo and Prometheus. The gateway HTTP surface is
+  exposed at `localhost:3000`; `curl -X POST http://localhost:3000/bookings` triggers
+  a full saga and produces a connected trace visible in the Grafana Explore view.
+
+### Added — 2026-06-29
 - **Notifier broker subscription** — the consuming side of the broker is now wired
   in a service, the mirror of the producing legs' outbox relay. `@signalman/broker`
   adds `BrokerSubscriptionHost`, the consume-side sibling of `OutboxRelayHost`: it
