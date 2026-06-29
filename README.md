@@ -61,9 +61,14 @@ drains its outbox onto a broker chosen from the environment
 `BrokerSubscriptionHost`** that subscribes its idempotent consumer to
 `ledger.committed` off the same configured broker — so a booking's terminal event
 actually drives the customer notification in a running service, not only in library
-tests, on the booking trace. The reconciler's consuming side (a broker-backed
-`SourceOfTruthGateway` projecting `inventory.*`/`supplier.*`/`ledger.*`) and Postgres
-per service are the remaining milestones.
+tests, on the booking trace. The **reconciler's broker-backed gateway** is now
+wired too: `BrokerSourceOfTruthGateway` subscribes to `inventory.*`,
+`supplier.*`, and `ledger.*` events, projects each delivery into a per-booking
+snapshot, and applies a settle-grace window before returning settled bookings to
+the comparison engine — so **M6 is complete**: the reconciler catches a real
+`supplier_confirmed_ledger_missing` divergence from live broker events and links
+the finding back to the booking trace via a span link. Postgres per service is
+the remaining datastore milestone.
 
 ## Quick start
 

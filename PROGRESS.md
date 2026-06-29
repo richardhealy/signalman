@@ -283,17 +283,24 @@ concrete slices needed to call it done.
   exactly once. The Postgres-backed `InboxStore` and the reconciler's subscription
   land with the datastore and the reconciler's source gateway
 
-### M6 — Reconciler ◐
+### M6 — Reconciler ☑
 
-- ◐ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
+- ☑ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
   the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler, and
   the pure `detectDivergences` engine compares each settled booking's
   inventory/supplier/ledger states against the consistency invariants. The
-  comparison, the scheduler, the findings store, and the trace linkage are built
-  and unit-tested against the in-memory `SourceOfTruthGateway` reference; the
-  broker/Postgres-backed gateway that feeds it real per-service state (subscribing
-  to `inventory.*`/`supplier.*`/`ledger.*`) lands with the datastore/broker
-  milestones
+  comparison, the scheduler, and the findings store are built and unit-tested
+  against the in-memory `SourceOfTruthGateway` reference. The **broker-backed
+  `SourceOfTruthGateway`** (`BrokerSourceOfTruthGateway`) is now built and wired:
+  it subscribes to `inventory.*`, `supplier.*`, and `ledger.*` events, projecting
+  each delivery into a per-booking snapshot; a **settle-grace window**
+  (`RECONCILER_SETTLE_GRACE_MS`, default 5 000 ms) filters out in-flight bookings
+  whose last event arrived too recently; and the `ReconcilerModule` wires a
+  `BrokerSubscriptionHost` (broker chosen via `createBrokerFromEnv`) that drives
+  `handleMessage` on every delivery. A module-level wiring test confirms that
+  published source events flow into the gateway and that the reconciler detects
+  the headline `supplier_confirmed_ledger_missing` divergence from real broker
+  events, idempotently across passes
 - ☑ Divergence findings linked to the originating booking trace — each new
   `DivergenceFinding` opens a `reconcile.divergence` span carrying a span link to
   the booking's trace context (lifted from the snapshot) and stamps the finding's
