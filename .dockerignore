@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.git/
+coverage/
+.nyc_output/
+*.log
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/
+CLAUDE.md
+scratchpad/
+tmp/

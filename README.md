@@ -17,55 +17,29 @@ current status.
 
 ## Status
 
-Foundations, the four saga participants, and the coordinating saga (milestones
-**M0 → M1**, with M4 compensations in shape). The monorepo, tooling, CI, the
-trace-context propagation library, the OpenTelemetry bootstrap library, the
-trace-correlated logging library, the observability interceptor (business spans +
-RED metrics), the transactional outbox library (durable staging + trace-aware
-relay), the idempotent inbox library (dedup + trace-continuing consumer), the
-**gateway** — the public HTTP entry point that opens a booking's root span and
-drives the coordinator over gRPC (`POST /bookings` to start a booking,
-`GET /bookings/:id` for its status) — the **inventory service** — a gRPC source of truth for
-holds — the **payments service** — a gRPC source of truth for
-authorizations/captures wrapping a simulated PSP — the **supplier service** — a
-gRPC source of truth for partner confirmations wrapping a simulated, deliberately
-slow-and-flaky external partner — the **ledger service** — the internal gRPC
-source of truth for the financial record (Commit/Reverse) — the
-**coordinator service** — the saga orchestrator that drives a booking across all
-four legs over gRPC and unwinds the completed steps in reverse on any failure —
-the **notifier service** — the async tail that consumes the booking's terminal
-`ledger.committed` event and tells the customer through a simulated provider,
-idempotently via the inbox — and the **reconciler service** — the periodic
-backstop that compares the sources of truth, flags any divergence, and links each
-finding back to the originating booking trace — are all in place and verified.
-Cross-service **trace propagation** is now wired on **both halves** of the
-one-trace story (M3). Synchronous: the trace starts at its true origin — the
-gateway's `POST /bookings` SERVER span — whose coordinator client injects the
-W3C `traceparent` into the gRPC metadata so the coordinator continues from it;
-the coordinator in turn opens a CLIENT span per leg call and injects the same
-`traceparent`, and the observability interceptor extracts it so each leg's SERVER
-span continues the same booking trace instead of orphaning. Asynchronous: the new
-**`@signalman/broker`** library — the `MessageBroker` boundary plus an in-memory
-reference — closes the outbox → broker → inbox hop, with an end-to-end test
-proving the saga step, the relay's PRODUCER publish span, and the inbox's
-CONSUMER consume span share one connected trace. The **first real transport** is
-now in place too: a **NATS JetStream adapter** (`NatsBroker`) implements the same
-`MessageBroker` boundary and is verified end to end against a live JetStream
-server — fan-out, queue-group load-balancing, at-least-once redelivery,
-dead-lettering, and the headline async trace continuity all hold with NATS in the
-middle. **Both sides of the broker are now wired in the services**: each producing leg
-(`inventory`, `payments`, `supplier`, `ledger`) runs an `OutboxRelayHost` that
-drains its outbox onto a broker chosen from the environment
-(`createBrokerFromEnv` — the in-memory reference by default, NATS when
-`BROKER=nats`), and on the consuming side the **notifier now runs a
-`BrokerSubscriptionHost`** that subscribes its idempotent consumer to
-`ledger.committed` off the same configured broker — so a booking's terminal event
-actually drives the customer notification in a running service, not only in library
-tests, on the booking trace. The reconciler's consuming side (a broker-backed
-`SourceOfTruthGateway` projecting `inventory.*`/`supplier.*`/`ledger.*`), Postgres
-per service, and the OTel Collector/Tempo/Grafana stack — which fold these
-in-process proofs onto the rest of the real infrastructure — are the upcoming
-milestones.
+All eight services, the full observability stack, and the one-command demo are
+now in place. `docker compose -f docker/docker-compose.yml up --build` starts
+everything: the booking platform (gateway, coordinator, inventory, payments,
+supplier, ledger, notifier, reconciler), NATS JetStream for the event broker, an
+OTel Collector forwarding traces to Tempo and exposing a Prometheus scrape
+endpoint, and Grafana with the RED metrics dashboard and Tempo datasource
+pre-provisioned.
+
+The **saga** (M1): `POST /bookings` opens a root span at the gateway, drives
+`hold → authorize → confirm → capture → commit → notify` through five services
+over gRPC and one async broker hop, and returns the booking outcome with its
+`traceId`. The **trace** (M3) is one connected span tree across every hop:
+gateway → coordinator over gRPC, coordinator → each leg over gRPC, and
+`ledger.committed` → notifier over NATS JetStream — all on one booking trace.
+The **outbox** (M2) defeats the dual-write problem in every producing service;
+the **inbox** (M5) makes every consumer redelivery-safe. The **compensations**
+(M4) unwind the completed steps on any failure (supplier.cancel → payments.void
+→ inventory.release), each compensation a flagged span. The **reconciler** (M6)
+runs periodic passes comparing the sources of truth and links each divergence
+finding back to the originating booking trace via a span link. **RED metrics**
+(M7) flow from every handler through the OTel Collector to Grafana: rate, error
+rate, error ratio, P50/P95/P99 latency, and an SLO gauge (% ops within 2 s), all
+sliced by service and operation.
 
 ## Stack
 
@@ -665,6 +639,43 @@ that subscribes to `inventory.*`/`supplier.*`/`ledger.*` to build the projection
 lands with later milestones, behind the same DI tokens.
 
 ## Getting started
+
+### One-command demo (Docker)
+
+The fastest way to see the system end to end — all 8 services, NATS JetStream,
+the OTel Collector, Tempo, and Grafana, in one command:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+Once up:
+
+| Surface | URL | Notes |
+|---------|-----|-------|
+| Bookings API | `http://localhost:3000` | `POST /bookings`, `GET /bookings/:id` |
+| Grafana | `http://localhost:3001` | `admin` / `signalman` — RED metrics dashboard opens by default |
+| Tempo | via Grafana → Explore | paste a `traceId` from `POST /bookings` to see the full booking trace |
+
+Fire a booking and watch it propagate through the trace:
+
+```bash
+curl -sX POST http://localhost:3000/bookings \
+  -H 'content-type: application/json' \
+  -d '{"sku":"seat-economy","qty":2,"amount":4200,"currency":"USD"}' | jq .
+# { "bookingId": "…", "status": "booked", "traceId": "…", … }
+# → open Grafana, Explore, Tempo, paste the traceId
+```
+
+To force a mid-saga failure and watch compensations fire (supply → void → release):
+
+```bash
+docker compose -f docker/docker-compose.yml \
+  run --rm -e SUPPLIER_FAILURE_RATE=1 supplier \
+  # then trigger a booking — the saga unwinds, compensation spans appear in the trace
+```
+
+### Local development
 
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
 

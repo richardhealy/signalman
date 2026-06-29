@@ -1,0 +1,50 @@
+# OpenTelemetry Collector configuration for the signalman demo stack.
+#
+# Receives OTLP/HTTP traces and metrics from every service, forwards traces to
+# Tempo over OTLP/gRPC, and exposes metrics in Prometheus scrape format so
+# Grafana can render the RED dashboard.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Include resource attributes (service.name, service.version, …) as metric
+    # labels so the Grafana dashboard can slice RED metrics by service.
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers:  [otlp]
+      processors: [batch]
+      exporters:  [otlp/tempo, debug]
+    metrics:
+      receivers:  [otlp]
+      processors: [batch]
+      exporters:  [prometheus]

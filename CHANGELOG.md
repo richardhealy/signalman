@@ -7,6 +7,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **One-command `docker-compose` demo stack** — `docker compose -f docker/docker-compose.yml up --build`
+  brings up the complete booking platform and its observability infrastructure in one
+  step. A single multi-stage `Dockerfile` (builder stage: `npm ci && npm run build`;
+  runner stage: slim Node 20 alpine with the compiled `dist/` and `node_modules`)
+  builds all eight services from the monorepo; each container receives the full `dist/`
+  tree and a per-service `command` pointing at its compiled entry point, so every
+  service starts from the same image without duplication. The compose file wires:
+  **NATS 2.10** (`-js -m 8222`) as the JetStream broker (with a `/healthz`-based
+  healthcheck so services wait until the broker is ready), the **OTel Collector
+  0.104** (OTLP/HTTP on 4318 for service telemetry; OTLP/gRPC to Tempo for traces;
+  Prometheus scrape on 8889 for metrics; a `health_check` extension the collector
+  healthcheck polls), **Grafana Tempo 2.5** (OTLP/gRPC ingestion, local storage,
+  1 h block retention), and **Grafana 11.1** (anonymous viewer access, `admin` /
+  `signalman` login). Grafana is provisioned at boot with two datasources — Tempo
+  (for trace lookup by `traceId`) and Prometheus (the Collector scrape endpoint) —
+  and the **signalman RED metrics dashboard** as the default home page. The dashboard
+  (`docker/grafana/dashboards/signalman-red.json`) renders Request Rate by service,
+  Request Rate by operation, Error Rate, Error Ratio (the SLO signal), P50 / P95 /
+  P99 latency, an SLO gauge (% ops completed within 2 s), and a Service Health
+  Summary table — all from the `signalman.operation.duration` histogram and
+  `signalman.operation.errors` counter the `@signalman/interceptor` records for
+  every handler. Common env vars (`BROKER=nats`, `NATS_URL`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+  zeroed failure rates) are declared once via a YAML anchor and merged into each
+  service; per-service overrides (gRPC URLs, latency defaults) are inline. The
+  `docker/otel-collector.yml` enables `resource_to_telemetry_conversion` so
+  `service.name` becomes a Prometheus label, letting the dashboard slice every
+  metric by service. `docker/tempo.yml` and the Grafana provisioning files live
+  under `docker/` alongside the compose file.
+
+### Added — 2026-06-29
 - **Notifier broker subscription** — the consuming side of the broker is now wired
   in a service, the mirror of the producing legs' outbox relay. `@signalman/broker`
   adds `BrokerSubscriptionHost`, the consume-side sibling of `OutboxRelayHost`: it

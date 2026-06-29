@@ -1,0 +1,32 @@
+apiVersion: 1
+
+datasources:
+  # Prometheus-compatible endpoint exposed by the OTel Collector.
+  # Carries the signalman RED metrics (rate, errors, duration) with
+  # service_name / operation labels derived from OTel resource attributes.
+  - name: Prometheus
+    type: prometheus
+    uid: signalman-prometheus
+    access: proxy
+    url: http://otel-collector:8889
+    isDefault: true
+    jsonData:
+      httpMethod: GET
+
+  # Tempo — distributed trace store.
+  # The Collector forwards every booking trace here over OTLP/gRPC.
+  # Grafana can open any trace by its traceId (returned by POST /bookings).
+  - name: Tempo
+    type: tempo
+    uid: signalman-tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      httpMethod: GET
+      serviceMap:
+        datasourceUid: signalman-prometheus
+      tracesToMetrics:
+        datasourceUid: signalman-prometheus
+        tags:
+          - key: service.name
+            value: service_name

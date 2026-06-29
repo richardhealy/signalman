@@ -149,8 +149,14 @@ concrete slices needed to call it done.
   through the subscription host onto shared brokers. The reconciler's consuming
   side — a broker-backed `SourceOfTruthGateway` projecting
   `inventory.*`/`supplier.*`/`ledger.*` — lands next
-- ☐ Postgres per service, OTel Collector
-- ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
+- ◐ Postgres per service, OTel Collector (in-memory reference stores in use; Postgres-backed stores land with the datastore milestone)
+- ☑ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
+  — `docker/docker-compose.yml` brings up all 8 services, NATS JetStream, an OTel
+  Collector (OTLP→Tempo for traces; Prometheus scrape for metrics), Grafana Tempo
+  2.5, and Grafana 11.1 with the RED metrics dashboard pre-provisioned and the
+  Tempo datasource wired for trace lookup. A single multi-stage `Dockerfile` builds
+  all services from the monorepo; each service picks up its compiled subtree and
+  shared `node_modules`. Run with `docker compose -f docker/docker-compose.yml up --build`.
 
 ### M1 — Happy-path saga ◐
 
@@ -302,7 +308,12 @@ concrete slices needed to call it done.
 
 ### M7 — Metrics + logs ◐
 
-- ◐ RED metrics and per-step SLOs in Grafana (RED instrumentation lives in `libs/interceptor`; Grafana dashboards/SLOs still to wire)
+- ☑ RED metrics and per-step SLOs in Grafana — `signalman.operation.duration`
+  histogram and `signalman.operation.errors` counter flow from every service via
+  `libs/interceptor` → OTel Collector → Prometheus scrape endpoint → Grafana;
+  the pre-provisioned `docker/grafana/dashboards/signalman-red.json` dashboard
+  renders Rate, Error Rate, Error Ratio, P50/P95/P99 Latency, and an SLO gauge
+  (% ops within 2 s) broken down by service and operation
 - ☑ Trace-correlated structured logging (`trace_id`/`span_id`) — `libs/logging`
 
 ### M8 — Harden + ship ☐

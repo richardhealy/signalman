@@ -1,0 +1,237 @@
+# signalman — one-command demo stack
+#
+# Brings up the complete booking platform: 8 services, a NATS JetStream broker,
+# an OpenTelemetry Collector, Grafana Tempo, and Grafana.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Once up:
+#   POST /bookings  →  http://localhost:3000/bookings
+#   Grafana         →  http://localhost:3001  (admin / signalman)
+#   Tempo traces    →  Grafana → Explore → Tempo → paste a traceId
+#
+# Environment notes:
+#   All services export OTLP/HTTP to the Collector on port 4318.
+#   All services use NATS JetStream for the event broker (BROKER=nats).
+#   In-memory reference stores are used for all per-service state — no Postgres
+#   needed for the demo; restart a service to reset its state.
+#   PSP/supplier failure rates are zeroed so the happy-path demo succeeds.
+#   Override them to induce failures and watch compensations fire in the trace.
+
+# ─── Shared anchors ──────────────────────────────────────────────────────────
+
+x-build: &build
+  build:
+    context: ..
+    dockerfile: Dockerfile
+
+# Common environment: OTel, broker, and zeroed failure rates.
+x-env: &env
+  NODE_ENV: production
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  BROKER: nats
+  NATS_URL: nats://nats:4222
+  PSP_DECLINE_RATE: "0"
+  PSP_FAILURE_RATE: "0"
+  SUPPLIER_REJECT_RATE: "0"
+  SUPPLIER_FAILURE_RATE: "0"
+  NOTIFIER_FAILURE_RATE: "0"
+
+# Core infrastructure that every service depends on.
+x-infra-deps: &infra-deps
+  nats:
+    condition: service_healthy
+  otel-collector:
+    condition: service_healthy
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Infrastructure
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  nats:
+    image: nats:2.10-alpine
+    # Enable JetStream (-js) and the monitoring HTTP port (-m 8222, used by the
+    # healthcheck).
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command: ["--config=/etc/otel/otel-collector.yml"]
+    volumes:
+      - ./otel-collector.yml:/etc/otel/otel-collector.yml:ro
+    ports:
+      - "4317:4317"   # OTLP/gRPC (for tools that prefer gRPC)
+      - "4318:4318"   # OTLP/HTTP (all signalman services → collector)
+      - "8889:8889"   # Prometheus scrape endpoint (→ Grafana)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:13133/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      tempo:
+        condition: service_started
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./tempo.yml:/etc/tempo/tempo.yml:ro
+    ports:
+      - "3200:3200"   # HTTP API (queried by Grafana for traces)
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: signalman
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/signalman-red.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - otel-collector
+      - tempo
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Saga leg services (gRPC sources of truth)
+# ─────────────────────────────────────────────────────────────────────────────
+
+  inventory:
+    <<: *build
+    command: ["node", "dist/services/inventory/services/inventory/src/main.js"]
+    environment:
+      <<: *env
+      INVENTORY_GRPC_URL: "0.0.0.0:50051"
+    ports:
+      - "50051:50051"
+    depends_on:
+      <<: *infra-deps
+    restart: unless-stopped
+
+  payments:
+    <<: *build
+    command: ["node", "dist/services/payments/services/payments/src/main.js"]
+    environment:
+      <<: *env
+      PAYMENTS_GRPC_URL: "0.0.0.0:50052"
+      PSP_LATENCY_MS: "50"
+    ports:
+      - "50052:50052"
+    depends_on:
+      <<: *infra-deps
+    restart: unless-stopped
+
+  supplier:
+    <<: *build
+    command: ["node", "dist/services/supplier/services/supplier/src/main.js"]
+    environment:
+      <<: *env
+      SUPPLIER_GRPC_URL: "0.0.0.0:50053"
+      SUPPLIER_LATENCY_MS: "150"
+    ports:
+      - "50053:50053"
+    depends_on:
+      <<: *infra-deps
+    restart: unless-stopped
+
+  ledger:
+    <<: *build
+    command: ["node", "dist/services/ledger/services/ledger/src/main.js"]
+    environment:
+      <<: *env
+      LEDGER_GRPC_URL: "0.0.0.0:50054"
+    ports:
+      - "50054:50054"
+    depends_on:
+      <<: *infra-deps
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Saga orchestrator
+# ─────────────────────────────────────────────────────────────────────────────
+
+  coordinator:
+    <<: *build
+    command: ["node", "dist/services/coordinator/services/coordinator/src/main.js"]
+    environment:
+      <<: *env
+      COORDINATOR_GRPC_URL: "0.0.0.0:50050"
+      INVENTORY_GRPC_URL: "inventory:50051"
+      PAYMENTS_GRPC_URL: "payments:50052"
+      SUPPLIER_GRPC_URL: "supplier:50053"
+      LEDGER_GRPC_URL: "ledger:50054"
+    ports:
+      - "50050:50050"
+    depends_on:
+      <<: *infra-deps
+      inventory:
+        condition: service_started
+      payments:
+        condition: service_started
+      supplier:
+        condition: service_started
+      ledger:
+        condition: service_started
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTTP entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+  gateway:
+    <<: *build
+    command: ["node", "dist/services/gateway/services/gateway/src/main.js"]
+    environment:
+      <<: *env
+      PORT: "3000"
+      COORDINATOR_GRPC_URL: "coordinator:50050"
+    ports:
+      - "3000:3000"
+    depends_on:
+      <<: *infra-deps
+      coordinator:
+        condition: service_started
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Async consumers (event-driven, no synchronous surface)
+# ─────────────────────────────────────────────────────────────────────────────
+
+  notifier:
+    <<: *build
+    command: ["node", "dist/services/notifier/services/notifier/src/main.js"]
+    environment:
+      <<: *env
+      NOTIFIER_LATENCY_MS: "30"
+    depends_on:
+      <<: *infra-deps
+    restart: unless-stopped
+
+  reconciler:
+    <<: *build
+    command: ["node", "dist/services/reconciler/services/reconciler/src/main.js"]
+    environment:
+      <<: *env
+      RECONCILER_INTERVAL_MS: "15000"
+    depends_on:
+      <<: *infra-deps
+    restart: unless-stopped
