@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **Broker-backed SourceOfTruthGateway for the reconciler** (M6) — `BrokerSourceOfTruthGateway`
+  subscribes to `inventory.*`, `supplier.*`, and `ledger.*` events on the configured
+  broker via `BrokerSubscriptionHost`, projecting per-booking source-of-truth state from
+  arriving events. A configurable settle-grace window (`RECONCILER_SETTLE_GRACE_MS`,
+  default 10 s) ensures only idle bookings are reconciled, never mid-saga ones. The
+  reconciler module now wires the broker-backed gateway into `SOURCE_OF_TRUTH_GATEWAY`
+  so the live docker-compose stack feeds the reconciler from real service events. A
+  module-level wiring spec proves the end-to-end path: broker publish → subscription
+  host → gateway projection, and that a deliberately induced divergence (supplier
+  confirmed, ledger absent) produces a `supplier_confirmed_ledger_missing` finding
+  when the reconciler runs.
+
+### Added — 2026-06-29
 - **One-command docker-compose stack** (M0) — `docker-compose up` brings the full
   demo online: NATS JetStream (broker), OTel Collector (OTLP/HTTP + gRPC receiver,
   Prometheus exporter for RED metrics, OTLP→Tempo export for traces), Grafana Tempo
