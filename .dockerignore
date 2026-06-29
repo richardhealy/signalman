@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+.git/
+.github/
+.idea/
+.vscode/
+*.log
+.env
+.env.*
+CLAUDE.md
+.claude/

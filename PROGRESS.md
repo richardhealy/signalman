@@ -149,8 +149,21 @@ concrete slices needed to call it done.
   through the subscription host onto shared brokers. The reconciler's consuming
   side — a broker-backed `SourceOfTruthGateway` projecting
   `inventory.*`/`supplier.*`/`ledger.*` — lands next
-- ☐ Postgres per service, OTel Collector
-- ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
+- ☑ Postgres per service, OTel Collector — seven Postgres containers (one per
+  service: inventory, payments, supplier, ledger, gateway, notifier, reconciler)
+  and an OTel Collector (OTLP/HTTP receiver on 4318, Prometheus exporter on 8889)
+  are provisioned in `docker-compose.yml`; the Collector forwards traces to Tempo
+  and exposes a metrics scrape endpoint for Prometheus. The Postgres-backed stores
+  plug in behind the existing DI tokens once the datastore milestone lands
+- ☑ One-command `docker-compose` stack — `docker-compose up` brings up the full
+  demo: eight NestJS services (gateway on :3000 with BROKER=nats), NATS JetStream,
+  OTel Collector, Tempo (traces), Prometheus (metrics), and Grafana (dashboards on
+  :3001). A single `Dockerfile` (multi-stage, APP build-arg) builds each service
+  from the compiled monorepo output; proto assets and inlined libs resolve via
+  relative paths so no tsconfig-paths is needed at runtime. Grafana is
+  pre-provisioned with Tempo + Prometheus datasources and a "Signalman — Booking
+  Platform" dashboard (trace search, request rate, error rate, latency
+  p50/p95/p99, per-service throughput)
 
 ### M1 — Happy-path saga ◐
 

@@ -7,6 +7,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **One-command docker-compose stack** — `docker-compose up` now brings the entire
+  demo online from a cold clone: NATS JetStream broker, eight NestJS services
+  (gateway → coordinator → inventory / payments / supplier / ledger, plus notifier
+  and reconciler as async consumers), OTel Collector, Tempo, Prometheus, and Grafana.
+  A single `Dockerfile` at the repo root uses a two-stage build (builder installs
+  and compiles the full monorepo; runtime extracts the compiled slice for one
+  service via an `APP` build-arg). Each service's compiled output is self-contained —
+  inlined libs and proto assets resolve via relative paths so no `tsconfig-paths` is
+  needed at runtime. The saga runs over the real NATS transport (`BROKER=nats`),
+  so outbox events flow across service boundaries and the reconciler's source
+  gateway will see live state once the broker-backed gateway lands. Observability
+  is fully wired: all services push OTLP to the Collector on port 4318; the
+  Collector forwards traces to Tempo (OTLP/gRPC on 4317) and exposes a Prometheus
+  scrape endpoint (port 8889); Grafana is pre-provisioned with Tempo and Prometheus
+  datasources plus a "Signalman — Booking Platform" dashboard covering trace
+  search, request rate, error rate, and latency p50/p95/p99 (Grafana on port
+  3001). Seven Postgres containers (one per service) are included and ready for the
+  Postgres-backed store milestone, where each service's in-memory stores will be
+  replaced behind the existing DI tokens.
+
+### Added — 2026-06-29
 - **Notifier broker subscription** — the consuming side of the broker is now wired
   in a service, the mirror of the producing legs' outbox relay. `@signalman/broker`
   adds `BrokerSubscriptionHost`, the consume-side sibling of `OutboxRelayHost`: it

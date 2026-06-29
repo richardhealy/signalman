@@ -61,11 +61,14 @@ drains its outbox onto a broker chosen from the environment
 `BrokerSubscriptionHost`** that subscribes its idempotent consumer to
 `ledger.committed` off the same configured broker — so a booking's terminal event
 actually drives the customer notification in a running service, not only in library
-tests, on the booking trace. The reconciler's consuming side (a broker-backed
-`SourceOfTruthGateway` projecting `inventory.*`/`supplier.*`/`ledger.*`), Postgres
-per service, and the OTel Collector/Tempo/Grafana stack — which fold these
-in-process proofs onto the rest of the real infrastructure — are the upcoming
-milestones.
+tests, on the booking trace. The **one-command `docker-compose` stack** is now in place: `docker-compose up
+--build` brings up all eight services plus NATS JetStream, OTel Collector, Tempo,
+Prometheus, and Grafana (with a pre-provisioned dashboard). Seven Postgres
+containers (one per service) are included and ready for the Postgres-backed store
+milestone, where each service's in-memory stores will be replaced behind the
+existing DI tokens. The reconciler's consuming side (a broker-backed
+`SourceOfTruthGateway` projecting `inventory.*`/`supplier.*`/`ledger.*`) and the
+Postgres-backed stores are the upcoming milestones.
 
 ## Stack
 
@@ -674,6 +677,51 @@ npm run build      # compile all projects
 npm test           # run the full test suite
 npm run lint       # eslint
 npm run typecheck  # tsc --noEmit across the workspace
+```
+
+### One-command stack (docker-compose)
+
+The fastest way to see everything running — all eight services, NATS JetStream,
+OTel Collector, Tempo, Prometheus, and Grafana — is:
+
+```bash
+docker-compose up --build
+```
+
+Once up:
+
+| Endpoint | What |
+|---|---|
+| `http://localhost:3000` | Gateway HTTP — `POST /bookings`, `GET /bookings/:id` |
+| `http://localhost:3001` | Grafana — pre-provisioned dashboard + Tempo trace search |
+| `http://localhost:9090` | Prometheus — raw metric queries |
+| `http://localhost:4318` | OTel Collector OTLP/HTTP receiver |
+| `http://localhost:3200` | Tempo HTTP (query directly or via Grafana) |
+
+Fire a booking and watch the trace appear in Grafana → Explore → Tempo:
+
+```bash
+curl -X POST http://localhost:3000/bookings \
+  -H 'content-type: application/json' \
+  -d '{"sku":"seat-economy","qty":2,"amount":4200,"currency":"USD"}'
+# {"bookingId":"bk_…","status":"booked","traceId":"…"}
+```
+
+Copy the `traceId` from the response and paste it into the Tempo search in
+Grafana to navigate the full booking trace — gateway → coordinator → each leg →
+the async notifier → any divergences the reconciler found. All services run with
+`BROKER=nats` by default in the compose stack, so events cross service boundaries
+over the real NATS JetStream transport and the notifier consumes `ledger.committed`
+from the broker rather than in-process.
+
+Environment variables to tune the simulated external boundaries (set in
+`docker-compose.yml` or via `docker-compose.override.yml`):
+
+```
+PSP_LATENCY_MS / PSP_DECLINE_RATE / PSP_FAILURE_RATE     # payments PSP
+SUPPLIER_LATENCY_MS / SUPPLIER_REJECT_RATE / SUPPLIER_FAILURE_RATE  # partner
+NOTIFIER_LATENCY_MS / NOTIFIER_FAILURE_RATE               # notification provider
+RECONCILER_INTERVAL_MS                                    # reconciler cadence (ms)
 ```
 
 ### Run the gateway

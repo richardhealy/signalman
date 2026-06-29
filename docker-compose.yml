@@ -1,0 +1,321 @@
+services:
+
+  # ── Broker ──────────────────────────────────────────────────────────────────
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Observability stack ──────────────────────────────────────────────────────
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./docker/otel-collector.yml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4318:4318"   # OTLP/HTTP  — services push here
+      - "8889:8889"   # Prometheus — Prometheus scrapes here
+      - "13133:13133" # health check
+    depends_on:
+      tempo:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:13133 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo/config.yml"]
+    volumes:
+      - ./docker/tempo.yml:/etc/tempo/config.yml
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200" # Tempo HTTP (Grafana datasource)
+      - "4317:4317" # OTLP/gRPC  (OTel Collector forwards here)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=1h
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+      GF_SERVER_HTTP_PORT: "3001"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3001:3001" # avoid clash with gateway on 3000
+    depends_on:
+      - tempo
+      - prometheus
+
+  # ── Postgres per service (ready for the Postgres-backed store milestone) ─────
+
+  pg-inventory:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: inventory
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-inventory-data:/var/lib/postgresql/data
+
+  pg-payments:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg-payments-data:/var/lib/postgresql/data
+
+  pg-supplier:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: supplier
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg-supplier-data:/var/lib/postgresql/data
+
+  pg-ledger:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ledger
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+    ports:
+      - "5435:5432"
+    volumes:
+      - pg-ledger-data:/var/lib/postgresql/data
+
+  pg-gateway:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+    ports:
+      - "5436:5432"
+    volumes:
+      - pg-gateway-data:/var/lib/postgresql/data
+
+  pg-notifier:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: notifier
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+    ports:
+      - "5437:5432"
+    volumes:
+      - pg-notifier-data:/var/lib/postgresql/data
+
+  pg-reconciler:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: reconciler
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+    ports:
+      - "5438:5432"
+    volumes:
+      - pg-reconciler-data:/var/lib/postgresql/data
+
+  # ── Saga leg services ────────────────────────────────────────────────────────
+
+  inventory:
+    build:
+      context: .
+      args:
+        APP: inventory
+    environment:
+      NODE_ENV: production
+      INVENTORY_GRPC_URL: "0.0.0.0:50051"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  payments:
+    build:
+      context: .
+      args:
+        APP: payments
+    environment:
+      NODE_ENV: production
+      PAYMENTS_GRPC_URL: "0.0.0.0:50052"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  supplier:
+    build:
+      context: .
+      args:
+        APP: supplier
+    environment:
+      NODE_ENV: production
+      SUPPLIER_GRPC_URL: "0.0.0.0:50053"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  ledger:
+    build:
+      context: .
+      args:
+        APP: ledger
+    environment:
+      NODE_ENV: production
+      LEDGER_GRPC_URL: "0.0.0.0:50054"
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  # ── Saga coordinator ─────────────────────────────────────────────────────────
+
+  coordinator:
+    build:
+      context: .
+      args:
+        APP: coordinator
+    environment:
+      NODE_ENV: production
+      COORDINATOR_GRPC_URL: "0.0.0.0:50050"
+      INVENTORY_GRPC_URL: "inventory:50051"
+      PAYMENTS_GRPC_URL: "payments:50052"
+      SUPPLIER_GRPC_URL: "supplier:50053"
+      LEDGER_GRPC_URL: "ledger:50054"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    depends_on:
+      - inventory
+      - payments
+      - supplier
+      - ledger
+      - otel-collector
+
+  # ── Public entry point ────────────────────────────────────────────────────────
+
+  gateway:
+    build:
+      context: .
+      args:
+        APP: gateway
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      COORDINATOR_GRPC_URL: "coordinator:50050"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    ports:
+      - "3000:3000"
+    depends_on:
+      - coordinator
+      - otel-collector
+
+  # ── Async consumers ───────────────────────────────────────────────────────────
+
+  notifier:
+    build:
+      context: .
+      args:
+        APP: notifier
+    environment:
+      NODE_ENV: production
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+  reconciler:
+    build:
+      context: .
+      args:
+        APP: reconciler
+    environment:
+      NODE_ENV: production
+      BROKER: nats
+      NATS_URL: "nats://nats:4222"
+      RECONCILER_INTERVAL_MS: "15000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      DEPLOYMENT_ENVIRONMENT: docker
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+
+volumes:
+  tempo-data:
+  pg-inventory-data:
+  pg-payments-data:
+  pg-supplier-data:
+  pg-ledger-data:
+  pg-gateway-data:
+  pg-notifier-data:
+  pg-reconciler-data:
