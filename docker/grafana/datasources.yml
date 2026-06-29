@@ -1,0 +1,37 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: true
+    jsonData:
+      httpMethod: GET
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags: [{ key: service.name, value: service_name }]
+        queries:
+          - name: Request rate
+            query: sum(rate(signalman_operation_duration_count{$$__tags}[5m]))
+          - name: Error rate
+            query: sum(rate(signalman_operation_errors_total{$$__tags}[5m]))
+      tracesToLogsV2:
+        datasourceUid: ''
+        tags: [{ key: service.name, value: service_name }]
+        filterByTraceID: true
+        filterBySpanID: false
+
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s

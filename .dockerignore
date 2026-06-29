@@ -1,0 +1,10 @@
+.git
+.github
+dist
+node_modules
+*.log
+*.md
+.nvmrc
+.prettierrc*
+.eslintrc*
+eslint.config.*

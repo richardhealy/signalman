@@ -149,8 +149,15 @@ concrete slices needed to call it done.
   through the subscription host onto shared brokers. The reconciler's consuming
   side — a broker-backed `SourceOfTruthGateway` projecting
   `inventory.*`/`supplier.*`/`ledger.*` — lands next
-- ☐ Postgres per service, OTel Collector
-- ☐ One-command `docker-compose` stack (services + broker + collector + Tempo + Grafana)
+- ☐ Postgres per service (Postgres-backed stores behind the same DI tokens)
+- ☑ One-command `docker-compose` stack — NATS JetStream, OTel Collector (OTLP
+  → Tempo + Prometheus), Tempo (trace storage + HTTP API), Prometheus (RED
+  metrics scrape), Grafana (pre-provisioned Tempo + Prometheus datasources and
+  RED dashboard), and all eight services wired via `SERVICE_ENTRY` +
+  `docker-start.js` (registers `@signalman/*` → compiled `dist/libs/*` so
+  `node` resolves path aliases without ts-node or source files in the
+  container); `docker-compose up --build` brings the whole demo online and
+  `POST http://localhost:3000/bookings` starts a booking and its trace
 
 ### M1 — Happy-path saga ◐
 

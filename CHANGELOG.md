@@ -7,6 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-29
+- **One-command docker-compose stack** — `docker-compose up --build` brings the
+  entire signalman demo online: NATS JetStream (broker, port 4222), an OTel
+  Collector (OTLP/HTTP 4318, fans out traces → Tempo and metrics → Prometheus),
+  Grafana Tempo (trace storage and HTTP API on 3200), Prometheus (scrapes the
+  Collector's RED metrics exposition on 8889), and Grafana (port 3001, auto-
+  provisioned with Tempo + Prometheus datasources and a pre-built RED metrics
+  dashboard). All eight services run in the same image (the monorepo compiled
+  once, `SERVICE_ENTRY` selects which service to boot), wired over the NATS
+  broker and the OTel Collector. A `docker-start.js` shim at boot registers the
+  `@signalman/*` path aliases against the compiled `dist/libs/*` output using
+  `tsconfig-paths` so `node` can resolve the monorepo imports without `ts-node`
+  or source files in the container — verified with a two-service smoke test
+  (gateway + inventory each boot in under 200 ms via the shim). The Grafana
+  dashboard (provisioned from `docker/grafana/dashboards/signalman.json`) shows
+  request rate, error rate, P99 latency, and error-ratio panels per service and
+  operation, plus an operation summary table — the RED method wired end to end
+  from the OTel interceptor through Prometheus to Grafana.
+
+### Added — 2026-06-29
 - **Notifier broker subscription** — the consuming side of the broker is now wired
   in a service, the mirror of the producing legs' outbox relay. `@signalman/broker`
   adds `BrokerSubscriptionHost`, the consume-side sibling of `OutboxRelayHost`: it

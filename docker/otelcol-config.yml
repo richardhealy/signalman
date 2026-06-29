@@ -1,0 +1,48 @@
+# OpenTelemetry Collector configuration for the signalman demo stack.
+#
+# Receives OTLP from all services, batches, and fans out:
+#   traces  → Tempo  (OTLP/gRPC)
+#   metrics → Prometheus-compatible exposition (scraped by Prometheus)
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+
+exporters:
+  # Traces → Tempo
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Metrics → Prometheus scrape endpoint on port 8889
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: signalman
+    resource_to_telemetry_conversion:
+      enabled: true   # surfaces service.name etc. as Prometheus labels
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

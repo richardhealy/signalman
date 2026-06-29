@@ -1,0 +1,45 @@
+# Grafana Tempo configuration for the signalman demo stack.
+# Stores traces locally and exposes the HTTP API for Grafana's Tempo datasource.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+# Service-graph and span-metric generation feeds Grafana's service map and
+# the Prometheus-backed RED metrics panel in the Signalman dashboard.
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: signalman
+  storage:
+    path: /var/tempo/generator/wal
+  processors:
+    service_graphs:
+      dimensions: [service.name]
+    span_metrics:
+      dimensions: [service.name, span.name]
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
+      remote_write_enabled: true

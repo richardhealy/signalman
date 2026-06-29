@@ -666,6 +666,40 @@ lands with later milestones, behind the same DI tokens.
 
 ## Getting started
 
+### One-command demo (docker-compose)
+
+The fastest way to see a booking trace end to end. Requires Docker and Docker
+Compose (v2).
+
+```bash
+docker-compose up --build
+```
+
+This builds a single image from the monorepo and starts all eight services plus
+the observability stack. Once the containers are healthy:
+
+```bash
+# Start a booking — generates one connected trace across every service.
+curl -X POST http://localhost:3000/bookings \
+  -H 'content-type: application/json' \
+  -d '{"sku":"seat-economy","qty":2,"amount":4200,"currency":"USD"}'
+# {"bookingId":"…","status":"booked","traceId":"…",...}
+
+# Open Grafana and paste the traceId into the Tempo search (Explore → Tempo).
+open http://localhost:3001   # admin / admin
+```
+
+The RED metrics dashboard is provisioned automatically under **Dashboards →
+Signalman — Booking Saga RED Metrics**; the Tempo datasource lets you jump from
+a slow metric to the exact trace. `POST` a few bookings and the panels populate
+in under 30 seconds.
+
+```bash
+docker-compose down -v      # stop everything and remove volumes
+```
+
+### Local development (Node only)
+
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
 
 ```bash

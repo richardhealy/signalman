@@ -1,0 +1,260 @@
+# signalman — one-command demo stack.
+#
+# Brings up:
+#   infrastructure  — NATS JetStream (broker), OTel Collector, Tempo, Prometheus, Grafana
+#   services        — gateway, coordinator, inventory, payments, supplier, ledger,
+#                     notifier, reconciler
+#
+# Usage:
+#   docker-compose up --build        # build images and start everything
+#   docker-compose up -d --build     # same, detached
+#   docker-compose logs -f gateway   # tail a single service
+#   docker-compose down -v           # stop and remove volumes
+#
+# Endpoints once running:
+#   Gateway HTTP   http://localhost:3000
+#   Grafana        http://localhost:3001   (admin / admin)
+#   Prometheus     http://localhost:9090
+#   NATS monitor   http://localhost:8222
+#   OTel Collector http://localhost:4318   (OTLP/HTTP)
+#
+# POST a booking to start a trace:
+#   curl -X POST http://localhost:3000/bookings \
+#     -H 'content-type: application/json' \
+#     -d '{"sku":"seat-economy","qty":2,"amount":4200,"currency":"USD"}'
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  nats:
+    image: nats:2-alpine
+    command: -js -m 8222
+    ports:
+      - "4222:4222"   # NATS client port
+      - "8222:8222"   # monitoring / management UI
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/varz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./docker/otelcol-config.yml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC (for direct service export)
+      - "4318:4318"   # OTLP HTTP (what the services use)
+      - "8889:8889"   # Prometheus metrics endpoint
+    depends_on:
+      tempo:
+        condition: service_started
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo-config.yml"]
+    volumes:
+      - ./docker/tempo-config.yml:/etc/tempo-config.yml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP API (Grafana datasource)
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - collector
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - ./docker/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./docker/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"   # 3001 on host to avoid conflict with the gateway on 3000
+    depends_on:
+      - tempo
+      - prometheus
+    restart: unless-stopped
+
+  # ── Services ────────────────────────────────────────────────────────────────
+
+  inventory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/inventory/services/inventory/src/main
+      INVENTORY_GRPC_URL: 0.0.0.0:50051
+      BROKER: nats
+      NATS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: inventory
+    depends_on:
+      nats:
+        condition: service_healthy
+      collector:
+        condition: service_started
+    restart: unless-stopped
+
+  payments:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/payments/services/payments/src/main
+      PAYMENTS_GRPC_URL: 0.0.0.0:50052
+      BROKER: nats
+      NATS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: payments
+      PSP_LATENCY_MS: "50"
+      PSP_DECLINE_RATE: "0"
+      PSP_FAILURE_RATE: "0"
+    depends_on:
+      nats:
+        condition: service_healthy
+      collector:
+        condition: service_started
+    restart: unless-stopped
+
+  supplier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/supplier/services/supplier/src/main
+      SUPPLIER_GRPC_URL: 0.0.0.0:50053
+      BROKER: nats
+      NATS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: supplier
+      # Supplier is deliberately slower — the external boundary where divergence is born.
+      SUPPLIER_LATENCY_MS: "150"
+      SUPPLIER_REJECT_RATE: "0"
+      SUPPLIER_FAILURE_RATE: "0"
+    depends_on:
+      nats:
+        condition: service_healthy
+      collector:
+        condition: service_started
+    restart: unless-stopped
+
+  ledger:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/ledger/services/ledger/src/main
+      LEDGER_GRPC_URL: 0.0.0.0:50054
+      BROKER: nats
+      NATS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: ledger
+    depends_on:
+      nats:
+        condition: service_healthy
+      collector:
+        condition: service_started
+    restart: unless-stopped
+
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/coordinator/services/coordinator/src/main
+      COORDINATOR_GRPC_URL: 0.0.0.0:50050
+      INVENTORY_GRPC_URL: inventory:50051
+      PAYMENTS_GRPC_URL: payments:50052
+      SUPPLIER_GRPC_URL: supplier:50053
+      LEDGER_GRPC_URL: ledger:50054
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: coordinator
+    depends_on:
+      - inventory
+      - payments
+      - supplier
+      - ledger
+      - collector
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/gateway/services/gateway/src/main
+      PORT: "3000"
+      COORDINATOR_GRPC_URL: coordinator:50050
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: gateway
+    ports:
+      - "3000:3000"   # The booking API — POST /bookings, GET /bookings/:id, /health
+    depends_on:
+      - coordinator
+      - collector
+    restart: unless-stopped
+
+  notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/notifier/services/notifier/src/main
+      BROKER: nats
+      NATS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: notifier
+      NOTIFIER_LATENCY_MS: "50"
+      NOTIFIER_FAILURE_RATE: "0"
+    depends_on:
+      nats:
+        condition: service_healthy
+      collector:
+        condition: service_started
+    restart: unless-stopped
+
+  reconciler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVICE_ENTRY: dist/services/reconciler/services/reconciler/src/main
+      BROKER: nats
+      NATS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: reconciler
+      RECONCILER_INTERVAL_MS: "30000"
+    depends_on:
+      nats:
+        condition: service_healthy
+      collector:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  tempo-data:
+  prometheus-data:
+  grafana-data:
