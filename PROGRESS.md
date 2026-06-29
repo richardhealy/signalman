@@ -116,7 +116,7 @@ concrete slices needed to call it done.
     outbox → relay → broker → inbox and asserts the three hops form one connected
     trace; the NATS-backed adapter swaps in behind the same boundary with the
     docker stack
-- ◐ Broker **transport** — the **NATS JetStream adapter** (`NatsBroker`) is built
+- ☑ Broker **transport** — the **NATS JetStream adapter** (`NatsBroker`) is built
   behind `libs/broker`'s `MessageBroker` boundary, the production sibling of the
   in-memory reference. It maps the reference semantics onto JetStream: a durable
   stream, native subject-wildcard matching, fan-out via an ephemeral push
@@ -129,26 +129,15 @@ concrete slices needed to call it done.
   default so CI stays green) — fan-out, queue groups, redelivery, dead-letter,
   **and the headline async trace continuity** (saga step → JetStream publish →
   consume on one connected trace)
-- ◐ Per-service relay/subscription wiring (choosing the broker via env) — **both
-  sides are now wired**. `@signalman/broker` adds `createBrokerFromEnv` (env-driven
-  transport selection: in-memory reference by default, `NatsBroker` when
-  `BROKER=nats`, returning the broker, its `kind`, and a `close`) and two
-  framework-agnostic lifecycle hosts whose `onApplicationBootstrap`/
-  `onApplicationShutdown` match NestJS's hooks structurally: `OutboxRelayHost` on
-  the producing side (start polling on boot; stop, flush once, and close on
-  shutdown) and `BrokerSubscriptionHost` on the consuming side (subscribe on boot;
-  drop the subscriptions and close the transport on shutdown). All four producing
-  legs (`inventory`, `payments`, `supplier`, `ledger`) register the relay host
-  behind a `MESSAGE_BROKER` token, and the **notifier now registers the
-  subscription host** — subscribing its `IdempotentConsumer` to `ledger.committed`
-  off the configured broker — so a booking's terminal event drives the
-  notification in a running service, not just in unit tests. Each side enables
-  shutdown hooks and runs on the booking trace. Tested at the lib level (env
-  selection, both host lifecycles) and with module-level tests driving a real
-  `inventory.held` event through the relay host and a real `ledger.committed` event
-  through the subscription host onto shared brokers. The reconciler's consuming
-  side — a broker-backed `SourceOfTruthGateway` projecting
-  `inventory.*`/`supplier.*`/`ledger.*` — lands next
+- ☑ Per-service relay/subscription wiring (choosing the broker via env) — **all
+  three consuming-side subscriptions are now wired**, closing the loop end to end.
+  `@signalman/broker` provides `createBrokerFromEnv` (env-driven transport
+  selection) and two lifecycle hosts: `OutboxRelayHost` on the producing side
+  (all four legs) and `BrokerSubscriptionHost` on the consuming side (notifier +
+  reconciler). The **reconciler now registers its subscription host**, subscribing
+  the `BrokerSourceOfTruthGateway`'s handler to `['inventory.*', 'supplier.*',
+  'ledger.*']` off the configured broker. Tested with module-level wiring specs
+  for both the notifier and the reconciler
 - ☑ OTel Collector — OTLP/HTTP+gRPC receiver, batch processor, OTLP→Tempo exporter, Prometheus exporter for RED metrics
 - ☑ One-command `docker-compose` stack — all eight services + NATS JetStream + OTel Collector + Grafana Tempo + Grafana; single `Dockerfile` builds every service from the monorepo; `docker-compose up` starts the full demo; gateway exposed at `localhost:3000`, Grafana at `localhost:3001`
 
@@ -285,15 +274,18 @@ concrete slices needed to call it done.
 
 ### M6 — Reconciler ◐
 
-- ◐ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
+- ☑ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
   the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler, and
   the pure `detectDivergences` engine compares each settled booking's
   inventory/supplier/ledger states against the consistency invariants. The
   comparison, the scheduler, the findings store, and the trace linkage are built
-  and unit-tested against the in-memory `SourceOfTruthGateway` reference; the
-  broker/Postgres-backed gateway that feeds it real per-service state (subscribing
-  to `inventory.*`/`supplier.*`/`ledger.*`) lands with the datastore/broker
-  milestones
+  and unit-tested; the broker-backed `BrokerSourceOfTruthGateway` now subscribes
+  to `inventory.*`/`supplier.*`/`ledger.*` off the configured broker — building
+  real per-booking projections, applying a settle-grace window, and propagating
+  trace headers so findings link back to the originating booking trace. A
+  module-level wiring spec proves the subscription is established and events flow
+  into the gateway. The Postgres-backed findings store swaps in behind
+  `FINDING_REPOSITORY` with the datastore milestone
 - ☑ Divergence findings linked to the originating booking trace — each new
   `DivergenceFinding` opens a `reconcile.divergence` span carrying a span link to
   the booking's trace context (lifted from the snapshot) and stamps the finding's
