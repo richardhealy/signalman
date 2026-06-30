@@ -1,3 +1,12 @@
+/**
+ * @packageDocumentation
+ * OpenTelemetry bootstrap for Signalman services.
+ *
+ * Provides SDK initialisation ({@link createTelemetry}, {@link startTelemetry}),
+ * OTLP configuration ({@link resolveOtlpConfig}), service-resource construction
+ * ({@link buildResource}), and convenience tracer/meter accessors
+ * ({@link getTracer}, {@link getMeter}).
+ */
 export {
   DEFAULT_OTLP_ENDPOINT,
   parseOtlpHeaders,

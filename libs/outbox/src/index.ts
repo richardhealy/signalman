@@ -1,3 +1,13 @@
+/**
+ * @packageDocumentation
+ * Transactional outbox for Signalman services.
+ *
+ * Services stage outbox events with {@link OutboxStore.add} in the **same
+ * transaction** as their business writes, eliminating the dual-write problem.
+ * The {@link OutboxRelay} then polls pending records and publishes them to the
+ * broker with at-least-once delivery. The {@link InMemoryOutboxStore} is used
+ * in tests; {@link PostgresOutboxStore} is used in production.
+ */
 export {
   createOutboxRecord,
   type CreateOutboxRecordOptions,

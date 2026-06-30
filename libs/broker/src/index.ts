@@ -1,3 +1,14 @@
+/**
+ * @packageDocumentation
+ * Message broker abstraction for Signalman services.
+ *
+ * Defines the {@link MessageBroker} interface (publish / subscribe) with an
+ * in-memory implementation ({@link InMemoryBroker}) for unit tests and a NATS
+ * JetStream implementation ({@link NatsBroker}) for production. Also exports
+ * the {@link OutboxRelayHost} NestJS lifecycle wrapper that drives the outbox
+ * relay loop, and {@link BrokerSubscriptionHost} that manages consumer
+ * subscriptions and inbox dedup.
+ */
 export { subjectMatches, type BrokerMessage } from './message';
 export {
   type BrokerHandler,

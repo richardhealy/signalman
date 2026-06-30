@@ -1,3 +1,12 @@
+/**
+ * @packageDocumentation
+ * NestJS observability interceptor for Signalman services.
+ *
+ * {@link ObservabilityModule} registers a global {@link ObservabilityInterceptor}
+ * that wraps every handler in an OpenTelemetry SERVER or CONSUMER span, records
+ * RED metrics (requests, errors, duration), and propagates the upstream trace
+ * context extracted from gRPC metadata or broker headers.
+ */
 export {
   DEFAULT_METRIC_PREFIX,
   RedMetrics,

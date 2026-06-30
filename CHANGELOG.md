@@ -24,6 +24,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation — 2026-06-30
+- **TSDoc package-level comments on all library barrel files** — each `index.ts`
+  in `libs/otel`, `libs/propagation`, `libs/logging`, `libs/interceptor`,
+  `libs/outbox`, `libs/inbox`, and `libs/broker` now carries a
+  `@packageDocumentation` block summarising the library's purpose and its key
+  public exports. All other public modules, classes, functions, and types were
+  already documented in previous increments. Marks documentation item (a) done.
+
 ### Added — 2026-06-30
 - **Messaging semantic conventions verification** (M3 complete) — the async-event
   hop test (`libs/broker/src/trace-continuity.spec.ts`) now explicitly asserts
