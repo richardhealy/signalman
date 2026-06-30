@@ -7,6 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-30
+- **Postgres wiring for payments, supplier, and ledger** — the three remaining
+  event-producing services now activate Postgres-backed stores when `POSTGRES_URL`
+  is set, completing the datastore layer for all saga legs. Each service gains a
+  dedicated Postgres repository (`PostgresPaymentRepository`,
+  `PostgresConfirmationRepository`, `PostgresLedgerRepository`) that upserts its
+  domain row in the service's own schema (`payments`, `supplier`, `ledger`) and
+  accepts a `PgUnitOfWork` so the domain write and its outbox row share one
+  database `BEGIN … COMMIT`. The services (`PaymentsService`, `SupplierService`,
+  `LedgerService`) gain an injectable `transact` option (defaulting to the
+  in-memory `runInTransaction`) so existing unit tests run unchanged and the
+  module swaps in `runInPgTransaction` when Postgres is configured. All three
+  modules follow the same env-driven selection pattern as the inventory leg: when
+  `POSTGRES_URL` is absent the in-memory references stand in, keeping the test
+  suite and single-process demos infrastructure-free; when set, `ensureSchema`
+  creates the tables on first boot. The `PostgresOutboxStore` is activated for all
+  three services in the same conditional, so the full outbox lifecycle (staging,
+  `SKIP LOCKED` claiming, publish marking, dead-lettering) runs against Postgres
+  in the docker-compose stack.
+
+### Added — 2026-06-30
 - **Postgres datastore layer** — the spec's "Postgres per service" requirement
   now has a complete implementation path. `libs/outbox` gains `PostgresOutboxStore`
   (full outbox lifecycle — staging, `SELECT … FOR UPDATE SKIP LOCKED` claiming,

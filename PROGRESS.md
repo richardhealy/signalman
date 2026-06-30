@@ -182,10 +182,10 @@ concrete slices needed to call it done.
 - ◐ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
   partner confirmations, wrapping a simulated external partner; ledger owns the
-  financial record (commit/reverse, no external boundary). Inventory now ships a
-  Postgres-backed store (`PostgresHoldRepository`) that activates when
-  `POSTGRES_URL` is set; payments, supplier, ledger, and gateway follow the same
-  pattern in subsequent increments.
+  financial record (commit/reverse, no external boundary). Inventory, payments,
+  supplier, and ledger now each ship a Postgres-backed store that activates when
+  `POSTGRES_URL` is set; gateway follows the same pattern in a subsequent
+  increment.
 
 ### M2 — Outbox ◐
 
@@ -205,7 +205,8 @@ concrete slices needed to call it done.
   running service, not just in lib tests. The **first consuming-side subscription
   is now wired too**: the notifier registers a `BrokerSubscriptionHost` that
   subscribes its idempotent consumer to `ledger.committed`. The Postgres-backed
-  `OutboxStore` and the reconciler's broker-backed source gateway land next
+  `OutboxStore` is now wired in inventory, payments, supplier, and ledger when
+  `POSTGRES_URL` is set; the reconciler's broker-backed source gateway is done
 - ☑ Transactional staging (the "transactional" in transactional outbox) —
   `runInTransaction` threads a `UnitOfWork` through a service's business-state
   write and the outbox `add` it accompanies so the two **commit together or not

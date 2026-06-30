@@ -26,7 +26,7 @@
  * collaborators model that atomic commit; a Postgres-backed store swaps in behind
  * the same tokens and gets it from a real database transaction.
  */
-import { createOutboxRecord, runInTransaction, type OutboxStore } from '@signalman/outbox';
+import { createOutboxRecord, runInTransaction, type OutboxStore, type UnitOfWork } from '@signalman/outbox';
 import { randomUUID } from 'node:crypto';
 import { type Confirmation } from './confirmation';
 import { type ConfirmationRepository } from './confirmation-repository';
@@ -69,6 +69,12 @@ export interface SupplierServiceOptions {
   idFactory?: () => string;
   /** Clock for confirmation timestamps; defaults to `() => new Date()`. */
   clock?: () => Date;
+  /**
+   * Transaction runner. Defaults to the in-memory {@link runInTransaction}.
+   * Swap in `runInPgTransaction` (bound to a `Pool`) to run the confirmation +
+   * outbox writes inside a real database transaction.
+   */
+  transact?: <T>(work: (tx: UnitOfWork) => Promise<T>) => Promise<T>;
 }
 
 export class SupplierService {
@@ -77,6 +83,7 @@ export class SupplierService {
   private readonly partner: SupplierPartner;
   private readonly idFactory: () => string;
   private readonly clock: () => Date;
+  private readonly transact: <T>(work: (tx: UnitOfWork) => Promise<T>) => Promise<T>;
 
   constructor(options: SupplierServiceOptions) {
     this.confirmations = options.confirmations;
@@ -84,6 +91,7 @@ export class SupplierService {
     this.partner = options.partner;
     this.idFactory = options.idFactory ?? randomUUID;
     this.clock = options.clock ?? (() => new Date());
+    this.transact = options.transact ?? runInTransaction;
   }
 
   /**
@@ -121,7 +129,7 @@ export class SupplierService {
     };
 
     // One transaction: the confirmation and its event commit together or not at all.
-    await runInTransaction(async (tx) => {
+    await this.transact(async (tx) => {
       await this.confirmations.commit(confirmation, tx);
       await this.outbox.add(
         createOutboxRecord({
@@ -165,7 +173,7 @@ export class SupplierService {
     };
 
     // One transaction: the cancellation and its event commit together or not at all.
-    await runInTransaction(async (tx) => {
+    await this.transact(async (tx) => {
       await this.confirmations.commit(cancelled, tx);
       await this.outbox.add(
         createOutboxRecord({
