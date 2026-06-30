@@ -364,3 +364,8 @@ deliverable per run.
 - ☑ c. Architecture dossier — `docs/architecture.md`
 - ☑ d. Integration guide(s) — `docs/integration.md`: one-command setup, curl walkthroughs for the happy path / compensation / divergence, HTTP and gRPC integration examples from external code, per-library reuse recipes for all seven `@signalman/*` libs, running without Docker, and a complete per-service environment variable reference
 - ☑ e. Usage/how-to guides, `docs/` index, final `README.md` pass
+- ☑ f. App screenshots — `docs/screenshots/signalman-overview.png` (services, libs, test
+  suite, quick-start) and `docs/screenshots/signalman-trace-anatomy.png` (happy-path
+  span tree, compensation path, reconciler divergence finding with span link); both
+  linked in `README.md` above the Documentation table; generated via Playwright/Chromium
+  (`scripts/screenshot.mjs`)

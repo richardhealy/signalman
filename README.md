@@ -12,6 +12,16 @@ was never released. `signalman` makes one booking one connected trace across eve
 hop, and runs a reconciler that compares the sources of truth and links any drift
 back to the originating trace.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/signalman-overview.png" alt="signalman overview — services, libraries, test suite, quick start" width="880">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/signalman-trace-anatomy.png" alt="signalman trace anatomy — happy path, compensation, reconciler divergence" width="900">
+</p>
+
 ## Documentation
 
 | Document | What it covers |
