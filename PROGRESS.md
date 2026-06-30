@@ -362,5 +362,5 @@ deliverable per run.
 - ☑ a. Doc comments across the public surface (TSDoc on modules, public functions, types)
 - ☑ b. API reference — `docs/api.md` covering the HTTP surface (gateway POST/GET /bookings, GET /health), all five gRPC services (Coordinator, Inventory, Payments, Supplier, Ledger) with every RPC's request/response fields, the async event catalogue (9 subjects across 4 producing services), and the full environment-variable reference per service
 - ☑ c. Architecture dossier — `docs/architecture.md`
-- ☐ d. Integration guide(s) — `docs/integration.md`
+- ☑ d. Integration guide(s) — `docs/integration.md`: how to stand up the stack with docker-compose or locally, configure all services, call the HTTP and gRPC surfaces with runnable curl/grpcurl examples, subscribe to async events on the NATS broker, inject failures to exercise compensation and reconciliation paths, plug in an external OTel backend, and a full environment-variable reference per service
 - ☐ e. Usage/how-to guides, `docs/` index, final `README.md` pass
