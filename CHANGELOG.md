@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — 2026-06-30 (per-step SLOs)
+- **Per-step SLO panels in Grafana** (M7) — the Signalman dashboard gains a *Per-step
+  SLOs* section with twelve colour-coded stat panels: one p99-latency panel and one
+  error-rate panel for each of the six saga steps (inventory hold ≤500 ms / <1% errors,
+  payments authorize ≤1 s / <5% errors, supplier confirm ≤3 s / <15% errors — deliberately
+  slow and flaky, payments capture ≤1 s / <5% errors, ledger commit ≤500 ms / <1% errors,
+  saga end-to-end ≤10 s / <20% errors). Each panel turns red when the step breaches its
+  threshold, green otherwise, giving an at-a-glance SLO status across the booking saga.
+  The existing *Booking saga — RED*, *Per-service RED*, and *Trace explorer* sections are
+  unchanged; the dashboard now refreshes every 10 s.
+
 ### Added — 2026-06-30
 - **Fan-out span links** (M3) — `IdempotentConsumer` gains a `fanOut: boolean`
   option that, when `true`, opens a new root trace for each delivery and carries

@@ -304,7 +304,15 @@ concrete slices needed to call it done.
 
 ### M7 — Metrics + logs ◐
 
-- ◐ RED metrics and per-step SLOs in Grafana (RED instrumentation lives in `libs/interceptor`; Grafana dashboards/SLOs still to wire)
+- ☑ RED metrics and per-step SLOs in Grafana — RED instrumentation lives in
+  `libs/interceptor`; the Grafana dashboard (`docker/grafana/dashboards/signalman.json`)
+  surfaces four sections: *Booking saga — RED* (rate/errors/duration across all operations),
+  *Per-service RED* (rate and p99 by service), *Per-step SLOs* (twelve colour-coded stat
+  panels — one p99 latency and one error-rate panel per saga step: inventory hold, payments
+  authorize, supplier confirm, payments capture, ledger commit, and the coordinator end-to-end;
+  each panel turns red when the step's SLO threshold is breached, green otherwise), and a
+  *Trace explorer* (TraceQL search across all booking services). Background refreshes every
+  10 s.
 - ☑ Trace-correlated structured logging (`trace_id`/`span_id`) — `libs/logging`
 
 ### M8 — Harden + ship ☐
