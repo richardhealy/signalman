@@ -25,6 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Documentation — 2026-06-30
+- **API reference** (`docs/api.md`) — complete reference for all three integration surfaces: the HTTP API (gateway `POST /bookings`, `GET /bookings/:id`, `GET /health` with full request/response field tables and error catalogue), all five internal gRPC services (`Coordinator.Book`, `Inventory.Hold`/`Release`, `Payments.Authorize`/`Capture`/`Void`, `Supplier.Confirm`/`Cancel`, `Ledger.Commit`/`Reverse`) with every request and reply field annotated, the async event catalogue (nine subjects across four producing services with payload fields and fan-out consumer notes), and a per-service environment-variable reference covering simulation knobs (`PSP_LATENCY_MS`, `SUPPLIER_FAILURE_RATE`, etc.), Postgres, broker, and OTel configuration. Marks documentation item (b) done.
+
+### Documentation — 2026-06-30
 - **TSDoc package-level comments on all library barrel files** — each `index.ts`
   in `libs/otel`, `libs/propagation`, `libs/logging`, `libs/interceptor`,
   `libs/outbox`, `libs/inbox`, and `libs/broker` now carries a
