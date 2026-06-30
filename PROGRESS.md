@@ -238,10 +238,14 @@ concrete slices needed to call it done.
   in-memory reference: with `NatsBroker` in the middle the same three spans still
   form one connected trace. The external supplier/PSP CLIENT hops are already
   span-shaped within their legs
-- ◐ Span links for fan-out (one event, many consumers) — the broker delivers
-  fan-out (every matching subscription gets a copy; queue groups load-balance),
-  so the substrate exists; emitting `span links` on the fan-out consume spans
-  is still to do
+- ☑ Span links for fan-out (one event, many consumers) — `IdempotentConsumer`
+  gains a `fanOut: boolean` option; when `true` the CONSUMER span opens a new
+  root trace and carries a span link back to the PRODUCER span instead of being
+  a child of it, so each consumer's trace is independent but navigable to the
+  source event. `BookingNotificationConsumer` is now `fanOut: true` (the
+  notifier and reconciler both subscribe to `ledger.*`); tested in
+  `trace-continuity.spec.ts` (two fans receive the same event, each gets a
+  distinct traceId and a link to the producer's spanId)
 - ◐ Spans align to OTel RPC + messaging semantic conventions — both sides of the
   gRPC hop now carry `rpc.system`/`rpc.service`/`rpc.method` (CLIENT and SERVER);
   the messaging-semconv check lands with the broker

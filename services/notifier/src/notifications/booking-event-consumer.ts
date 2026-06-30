@@ -83,6 +83,11 @@ export class BookingNotificationConsumer {
       tracer: options.tracer,
       messagingSystem: options.messagingSystem,
       clock: options.clock,
+      // The reconciler also subscribes to ledger.* events, so this consumer
+      // is one of several that receive each message (fan-out). Open a new root
+      // trace and link back to the producer so the notifier's trace is
+      // independent but still navigable to the originating booking trace.
+      fanOut: true,
     });
   }
 

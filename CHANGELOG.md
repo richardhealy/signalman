@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — 2026-06-30
+- **Fan-out span links** (M3) — `IdempotentConsumer` gains a `fanOut: boolean`
+  option that, when `true`, opens a new root trace for each delivery and carries
+  a span link back to the PRODUCER span instead of creating a child span. This
+  is the correct OTel fan-out tracing pattern: each consumer's trace is
+  independent (different traceId) but navigable to the source event via the link.
+  `BookingNotificationConsumer` is marked `fanOut: true` because both the notifier
+  and the reconciler subscribe to `ledger.*`, making every `ledger.committed`
+  delivery a fan-out. Two new test assertions cover the shape: the
+  `trace-continuity.spec.ts` fan-out case (two consumers, each gets a distinct
+  root trace with one link to the producer's spanId) and the notifier consumer
+  tracing test (consume span has no parent, has one link, provider hop is on the
+  consume trace not the publish trace).
+
 ### Added — 2026-06-29
 - **Reconciler broker-backed SourceOfTruthGateway** (M6) — the reconciler now
   receives real source-of-truth events from the producing services rather than

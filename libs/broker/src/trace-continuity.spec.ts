@@ -4,6 +4,11 @@
  * spec's headline turns on, that all three hops hang off **one connected trace**
  * with no orphan spans. This is the async half of "one booking = one trace"
  * (M3), the counterpart to the synchronous gRPC half wired in the coordinator.
+ *
+ * Also covers fan-out tracing (M3): when multiple consumers receive the same
+ * event, each opens a new root trace linked back to the producer span rather
+ * than becoming a child of it — so every consumer's trace is independent and
+ * navigable to the source event via the span link.
  */
 import {
   SpanKind,
@@ -20,6 +25,7 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { IdempotentConsumer, InMemoryInboxStore } from '@signalman/inbox';
 import { InMemoryOutboxStore, OutboxRelay, createOutboxRecord } from '@signalman/outbox';
+import { injectContext } from '@signalman/propagation';
 import { type BrokerMessage } from './message';
 import { InMemoryBroker } from './memory-broker';
 import { BrokerPublisher } from './outbox-publisher';
@@ -178,5 +184,66 @@ describe('async-event hop trace continuity', () => {
     // redelivers, second delivery succeeds and the inbox records it once.
     expect(attempts).toBe(2);
     expect(handled).toEqual(['rec_1']);
+  });
+
+  it('fan-out: each consumer opens its own root trace, linked to the producer span', async () => {
+    // Two consumers subscribe to the same subject (fan-out).
+    const broker = new InMemoryBroker();
+    const consumer1 = new IdempotentConsumer({
+      store: new InMemoryInboxStore(),
+      consumer: 'notifier',
+      tracer,
+      messagingSystem: 'memory',
+      fanOut: true,
+    });
+    const consumer2 = new IdempotentConsumer({
+      store: new InMemoryInboxStore(),
+      consumer: 'reconciler',
+      tracer,
+      messagingSystem: 'memory',
+      fanOut: true,
+    });
+    const handled: string[] = [];
+    broker.subscribe('ledger.committed', async (message) => {
+      await consumer1.consume(toConsumedMessage(message), async () => {
+        handled.push('notifier');
+      });
+    });
+    broker.subscribe('ledger.committed', async (message) => {
+      await consumer2.consume(toConsumedMessage(message), async () => {
+        handled.push('reconciler');
+      });
+    });
+
+    // Publish with a producer span whose context is injected into headers.
+    const producerSpan = tracer.startSpan('publish ledger.committed', { kind: SpanKind.PRODUCER });
+    const producerTraceId = producerSpan.spanContext().traceId;
+    const producerSpanId = producerSpan.spanContext().spanId;
+    const headers = injectContext(trace.setSpan(otelContext.active(), producerSpan), {});
+    producerSpan.end();
+
+    await broker.publish({ ...ledgerCommitted, headers });
+    await broker.drain();
+
+    expect(handled).toHaveLength(2);
+    expect(handled).toEqual(expect.arrayContaining(['notifier', 'reconciler']));
+
+    const spans = exporter.getFinishedSpans();
+    const consumeSpans = spans.filter((s) => s.name === 'consume ledger.committed');
+    expect(consumeSpans).toHaveLength(2);
+
+    for (const consumeSpan of consumeSpans) {
+      // Each consumer opens a NEW trace — not the publisher's trace.
+      expect(consumeSpan.spanContext().traceId).not.toBe(producerTraceId);
+      // No parent span — each is the root of its own trace.
+      expect(parentSpanId(consumeSpan)).toBeUndefined();
+      // But it carries one span link pointing back to the producer span.
+      expect(consumeSpan.links).toHaveLength(1);
+      expect(consumeSpan.links[0].context.traceId).toBe(producerTraceId);
+      expect(consumeSpan.links[0].context.spanId).toBe(producerSpanId);
+    }
+
+    // The two consumers have independent traces (different from each other too).
+    expect(consumeSpans[0].spanContext().traceId).not.toBe(consumeSpans[1].spanContext().traceId);
   });
 });

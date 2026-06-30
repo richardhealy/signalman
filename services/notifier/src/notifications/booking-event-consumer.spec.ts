@@ -164,7 +164,7 @@ describe('BookingNotificationConsumer', () => {
       return { headers, publishSpanId: ctx.spanId, traceId: ctx.traceId };
     }
 
-    it('joins the publish trace and nests the provider hop under the consume span', async () => {
+    it('opens a new root trace and links to the publish span (fan-out consumer)', async () => {
       const { headers, publishSpanId, traceId } = headersFromPublish();
       const channel = new SimulatedNotificationChannel({
         tracer,
@@ -181,8 +181,14 @@ describe('BookingNotificationConsumer', () => {
 
       expect(consumeSpan).toBeDefined();
       expect(consumeSpan!.kind).toBe(SpanKind.CONSUMER);
-      expect(consumeSpan!.spanContext().traceId).toBe(traceId);
-      expect(parentSpanId(consumeSpan!)).toBe(publishSpanId);
+      // Fan-out: the consume span opens a NEW trace (different traceId from publisher).
+      expect(consumeSpan!.spanContext().traceId).not.toBe(traceId);
+      // No parent — it's the root of its own trace.
+      expect(parentSpanId(consumeSpan!)).toBeUndefined();
+      // But it carries a span link back to the publisher's span.
+      expect(consumeSpan!.links).toHaveLength(1);
+      expect(consumeSpan!.links[0].context.traceId).toBe(traceId);
+      expect(consumeSpan!.links[0].context.spanId).toBe(publishSpanId);
       expect(consumeSpan!.attributes).toMatchObject({
         'messaging.operation.name': 'process',
         'messaging.destination.name': 'ledger.committed',
@@ -191,9 +197,10 @@ describe('BookingNotificationConsumer', () => {
         'signalman.inbox.consumer': 'notifier',
       });
 
-      // The provider CLIENT span is on the same booking trace, parented to consume.
+      // The provider CLIENT span is on the CONSUME trace (not the publish trace),
+      // parented to the consume span.
       expect(sendSpan).toBeDefined();
-      expect(sendSpan!.spanContext().traceId).toBe(traceId);
+      expect(sendSpan!.spanContext().traceId).toBe(consumeSpan!.spanContext().traceId);
       expect(parentSpanId(sendSpan!)).toBe(consumeSpan!.spanContext().spanId);
     });
 

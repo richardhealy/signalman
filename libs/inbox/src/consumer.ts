@@ -3,19 +3,27 @@
  * each message is processed at most once, on the trace it was published under.
  *
  * For every delivered message it extracts the upstream trace context from the
- * broker headers and opens a CONSUMER span parented to it — so the consume span
- * joins the same booking trace as the producer's publish span instead of
- * orphaning — then dedups through an {@link InboxStore}. A first delivery runs
- * the handler under the active consume span (its own child spans and logs nest
- * in the trace) and records the marker atomically with the handler's side
- * effects; a redelivery is skipped and tagged on the span so the duplicate is
- * visible rather than silent.
+ * broker headers and opens a CONSUMER span, then dedups through an
+ * {@link InboxStore}. A first delivery runs the handler under the active consume
+ * span (its own child spans and logs nest in the trace) and records the marker
+ * atomically with the handler's side effects; a redelivery is skipped and tagged
+ * on the span so the duplicate is visible rather than silent.
+ *
+ * **Trace mode** — controlled by {@link IdempotentConsumerOptions.fanOut}:
+ * - `false` (default, pipeline): the CONSUMER span is a child of the PRODUCER
+ *   span, so the consume hop joins the same booking trace end-to-end. Use when
+ *   there is a single consumer for a message.
+ * - `true` (fan-out): the CONSUMER span opens a new root trace and carries a
+ *   {@link Link} back to the PRODUCER span. Use when multiple consumers each
+ *   receive their own copy of the same message — this keeps each consumer's
+ *   trace independent while still navigable to the source event.
  *
  * A handler failure is annotated on the span and rethrown, so the caller can
  * NACK and let the broker redeliver — at-least-once delivery plus this dedup is
  * the effectively-once processing the spec calls for.
  */
 import {
+  ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
   context as otelContext,
@@ -76,6 +84,17 @@ export interface IdempotentConsumerOptions<Tx = void> {
   messagingSystem?: string;
   /** Clock for the recorded `processedAt`. Defaults to `() => new Date()`. */
   clock?: () => Date;
+  /**
+   * When `true`, this consumer is one of several that each receive a copy of
+   * the same message (fan-out). The CONSUMER span opens a new root trace and
+   * carries a span {@link Link} back to the PRODUCER span, so each consumer's
+   * trace is independent but still navigable to the source event.
+   *
+   * When `false` (default), the CONSUMER span is a direct child of the
+   * PRODUCER span on the same trace — the right choice for a single-consumer
+   * pipeline.
+   */
+  fanOut?: boolean;
 }
 
 /** The OTel `error.type` for an error value, by its constructor name. */
@@ -92,6 +111,7 @@ export class IdempotentConsumer<Tx = void> {
   private readonly tracer: Tracer;
   private readonly messagingSystem?: string;
   private readonly clock: () => Date;
+  private readonly fanOut: boolean;
 
   constructor(options: IdempotentConsumerOptions<Tx>) {
     this.store = options.store;
@@ -99,6 +119,7 @@ export class IdempotentConsumer<Tx = void> {
     this.tracer = options.tracer ?? getTracer('@signalman/inbox');
     this.messagingSystem = options.messagingSystem;
     this.clock = options.clock ?? (() => new Date());
+    this.fanOut = options.fanOut ?? false;
   }
 
   /**
@@ -121,15 +142,25 @@ export class IdempotentConsumer<Tx = void> {
     message: ConsumedMessage,
     handler: (tx: Tx) => Promise<T>,
   ): Promise<ConsumeResult<T>> {
-    // Continue the publisher's trace: the captured `traceparent` becomes the
-    // parent of the consume span (a no-op base context when absent).
-    const parentContext = extractContext(message.headers, otelContext.active());
+    const extractedContext = extractContext(message.headers, otelContext.active());
+
+    // Fan-out: each consumer opens a new root trace and links back to the
+    // producer's publish span, so every consumer's trace is independent but
+    // navigable to the source event via the span link.
+    // Pipeline (default): the consume span is a child of the producer's span on
+    // the same trace — the right shape for a single-consumer hop.
+    const producerCtx = this.fanOut ? trace.getSpanContext(extractedContext) : undefined;
+    const links = producerCtx ? [{ context: producerCtx }] : undefined;
+
     const span = this.tracer.startSpan(
       `consume ${message.eventType}`,
-      { kind: SpanKind.CONSUMER, attributes: this.spanAttributes(message) },
-      parentContext,
+      { kind: SpanKind.CONSUMER, attributes: this.spanAttributes(message), links },
+      this.fanOut ? ROOT_CONTEXT : extractedContext,
     );
-    const spanContext = trace.setSpan(parentContext, span);
+    const spanContext = trace.setSpan(
+      this.fanOut ? otelContext.active() : extractedContext,
+      span,
+    );
 
     try {
       // Keep the consume span active across dedup + handler, so any child span
