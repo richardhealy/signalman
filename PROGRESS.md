@@ -169,23 +169,25 @@ concrete slices needed to call it done.
   (`Authorize`/`Capture`/`Void`), `supplier.proto` (`Confirm`/`Cancel`), and
   `ledger.proto` (`Commit`/`Reverse`) defined and served; the notifier contract
   upcoming
-- ◐ `gateway` is the booking's entry point — `POST /bookings` opens the root span
+- ☑ `gateway` is the booking's entry point — `POST /bookings` opens the root span
   and calls `Coordinator.Book` over gRPC, returns the recorded outcome, and
   `GET /bookings/:id` reads a booking's fate back; this is how a booking is
-  started from outside the system
+  started from outside the system; the gateway now records outcomes through the
+  Postgres-backed `PostgresBookingStore` when `POSTGRES_URL` is set
 - ◐ Coordinator drives `hold → authorize → confirm → capture → commit` over gRPC
   (verified end to end against the four live leg services); the async `notify`
   step runs in the `notifier` service, which now **subscribes to `ledger.committed`
   off the configured broker** (`BrokerSubscriptionHost`) and notifies the customer
   — so the saga's tail is wired end to end over the broker, in-process under the
   in-memory default and cross-service under `BROKER=nats`
-- ◐ Per-service state — inventory owns holds and per-SKU availability; payments
+- ☑ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
   partner confirmations, wrapping a simulated external partner; ledger owns the
-  financial record (commit/reverse, no external boundary). Inventory, payments,
-  supplier, and ledger now each ship a Postgres-backed store that activates when
-  `POSTGRES_URL` is set; gateway follows the same pattern in a subsequent
-  increment.
+  financial record (commit/reverse, no external boundary). All five services —
+  inventory, payments, supplier, ledger, and gateway — now ship Postgres-backed
+  stores that activate when `POSTGRES_URL` is set; the gateway's
+  `PostgresBookingStore` (`gateway.bookings`) completes the set, with last-wins
+  upsert semantics and the same gated integration test pattern as the saga legs.
 
 ### M2 — Outbox ◐
 

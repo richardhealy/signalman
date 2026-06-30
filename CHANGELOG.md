@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-30
+- **Postgres booking store for the gateway** — `PostgresBookingStore` persists
+  booking outcomes in a `gateway.bookings` table (booking id, status, request
+  fields, trace id, recorded-at, and all optional saga-reference and failure
+  fields as nullable columns). The `BookingModule` now activates it when
+  `POSTGRES_URL` is set and falls back to the in-memory reference otherwise,
+  following the same env-driven selection pattern as the four saga legs
+  (inventory, payments, supplier, ledger). Writes are last-wins on the primary
+  key so a retried `POST /bookings` overwrites the previous outcome. A gated
+  integration test (`pg-booking-store.integration.spec.ts`, skipped by default,
+  run with `POSTGRES_TEST_URL`) covers save-and-retrieve for both `booked` and
+  `failed` records, unknown-id lookups, and the last-wins overwrite semantics.
+  Completes the Postgres datastore layer across all services in the docker-compose
+  stack.
+
+### Added — 2026-06-30
 - **Postgres wiring for payments, supplier, and ledger** — the three remaining
   event-producing services now activate Postgres-backed stores when `POSTGRES_URL`
   is set, completing the datastore layer for all saga legs. Each service gains a
