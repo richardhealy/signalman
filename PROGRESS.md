@@ -8,7 +8,7 @@ legend: ☐ not started, ◐ in progress, ☑ done.
 Milestones are derived from the spec's milestone table. Each is broken into the
 concrete slices needed to call it done.
 
-### M0 — Scaffold ◐
+### M0 — Scaffold ☑
 
 - ☑ NestJS + TypeScript monorepo tooling (`nest-cli.json`, `tsconfig`, strict mode)
 - ☑ Jest test runner wired to the monorepo path aliases
@@ -116,7 +116,7 @@ concrete slices needed to call it done.
     outbox → relay → broker → inbox and asserts the three hops form one connected
     trace; the NATS-backed adapter swaps in behind the same boundary with the
     docker stack
-- ◐ Broker **transport** — the **NATS JetStream adapter** (`NatsBroker`) is built
+- ☑ Broker **transport** — the **NATS JetStream adapter** (`NatsBroker`) is built
   behind `libs/broker`'s `MessageBroker` boundary, the production sibling of the
   in-memory reference. It maps the reference semantics onto JetStream: a durable
   stream, native subject-wildcard matching, fan-out via an ephemeral push
@@ -162,21 +162,21 @@ concrete slices needed to call it done.
   service (single instance, per-service schemas in `signalman` database) and
   propagates `POSTGRES_URL` to every application container.
 
-### M1 — Happy-path saga ◐
+### M1 — Happy-path saga ☑
 
-- ◐ gRPC contracts for the synchronous commands — `coordinator.proto` (`Book`),
+- ☑ gRPC contracts for the synchronous commands — `coordinator.proto` (`Book`),
   `inventory.proto` (`Hold`/`Release`), `payments.proto`
   (`Authorize`/`Capture`/`Void`), `supplier.proto` (`Confirm`/`Cancel`), and
-  `ledger.proto` (`Commit`/`Reverse`) defined and served; the notifier contract
-  upcoming
+  `ledger.proto` (`Commit`/`Reverse`) defined and served; the notifier is a pure
+  event consumer with no gRPC surface
 - ☑ `gateway` is the booking's entry point — `POST /bookings` opens the root span
   and calls `Coordinator.Book` over gRPC, returns the recorded outcome, and
   `GET /bookings/:id` reads a booking's fate back; this is how a booking is
   started from outside the system; the gateway now records outcomes through the
   Postgres-backed `PostgresBookingStore` when `POSTGRES_URL` is set
-- ◐ Coordinator drives `hold → authorize → confirm → capture → commit` over gRPC
+- ☑ Coordinator drives `hold → authorize → confirm → capture → commit` over gRPC
   (verified end to end against the four live leg services); the async `notify`
-  step runs in the `notifier` service, which now **subscribes to `ledger.committed`
+  step runs in the `notifier` service, which **subscribes to `ledger.committed`
   off the configured broker** (`BrokerSubscriptionHost`) and notifies the customer
   — so the saga's tail is wired end to end over the broker, in-process under the
   in-memory default and cross-service under `BROKER=nats`
@@ -189,26 +189,17 @@ concrete slices needed to call it done.
   `PostgresBookingStore` (`gateway.bookings`) completes the set, with last-wins
   upsert semantics and the same gated integration test pattern as the saga legs.
 
-### M2 — Outbox ◐
+### M2 — Outbox ☑
 
-- ◐ Transactional outbox table + relay per service — reusable `libs/outbox`
+- ☑ Transactional outbox table + relay per service — reusable `libs/outbox`
   (record staging, store contract, trace-aware relay) is built and unit-tested;
-  the inventory service stages `inventory.held`/`inventory.released`, the
-  payments service stages `payment.authorized`/`.captured`/`.voided`, the
-  supplier service stages `supplier.confirmed`/`.cancelled`, and the ledger
-  service stages `ledger.committed`/`.reversed` events through an `OutboxStore`
-  alongside their state changes. The relay's `Publisher` now has a concrete
-  implementation: `@signalman/broker`'s `BrokerPublisher` over the
-  `MessageBroker` boundary (with an `InMemoryBroker` reference), so the relay
-  publishes onto an actual broker in-process. **Per-service relay wiring is now
-  done**: each producing leg registers an `OutboxRelayHost` (broker chosen via
+  all four producing legs stage their events through an `OutboxStore` alongside
+  their state changes. Each leg registers an `OutboxRelayHost` (broker chosen via
   `createBrokerFromEnv`) that drains its outbox onto the broker on application
-  bootstrap and tears down on shutdown — so staged events actually publish in a
-  running service, not just in lib tests. The **first consuming-side subscription
-  is now wired too**: the notifier registers a `BrokerSubscriptionHost` that
-  subscribes its idempotent consumer to `ledger.committed`. The Postgres-backed
-  `OutboxStore` is now wired in inventory, payments, supplier, and ledger when
-  `POSTGRES_URL` is set; the reconciler's broker-backed source gateway is done
+  bootstrap; the notifier registers a `BrokerSubscriptionHost` consuming
+  `ledger.committed`. The Postgres-backed `PostgresOutboxStore` is wired in all
+  four producing services when `POSTGRES_URL` is set, completing the
+  infrastructure-backed outbox lifecycle end to end
 - ☑ Transactional staging (the "transactional" in transactional outbox) —
   `runInTransaction` threads a `UnitOfWork` through a service's business-state
   write and the outbox `add` it accompanies so the two **commit together or not
@@ -233,9 +224,9 @@ concrete slices needed to call it done.
   re-delivers rather than drops it (at-least-once, the duplicate the idempotent
   inbox absorbs — proven in `@signalman/broker`)
 
-### M3 — Trace propagation ◐
+### M3 — Trace propagation ☑
 
-- ◐ One booking = one connected trace across gRPC, async events, external hop —
+- ☑ One booking = one connected trace across gRPC, async events, external hop —
   **both the synchronous gRPC half and the async-event hop are now wired**. The
   trace now starts at its true origin: the gateway's `POST /bookings` SERVER span
   is the **root**, and the gateway's coordinator client opens a CLIENT span and
@@ -267,42 +258,48 @@ concrete slices needed to call it done.
   notifier and reconciler both subscribe to `ledger.*`); tested in
   `trace-continuity.spec.ts` (two fans receive the same event, each gets a
   distinct traceId and a link to the producer's spanId)
-- ◐ Spans align to OTel RPC + messaging semantic conventions — both sides of the
-  gRPC hop now carry `rpc.system`/`rpc.service`/`rpc.method` (CLIENT and SERVER);
-  the messaging-semconv check lands with the broker
+- ☑ Spans align to OTel RPC + messaging semantic conventions — gRPC hops carry
+  `rpc.system`/`rpc.service`/`rpc.method` (CLIENT and SERVER, verified in
+  `libs/interceptor/src/operation.spec.ts`); the broker's publish and consume
+  spans carry `messaging.operation.name`, `messaging.destination.name`,
+  `messaging.message.id`, and `messaging.system` (verified in
+  `libs/broker/src/trace-continuity.spec.ts`). This closes the spec's
+  quality checklist item: "Spans align to the OTel RPC and messaging semantic
+  conventions (verified against current semconv)."
 
-### M4 — Compensations ◐
+### M4 — Compensations ☑
 
-- ◐ Failure paths unwind in reverse — the coordinator saga runs the completed
+- ☑ Failure paths unwind in reverse — the coordinator saga runs the completed
   steps' compensations in reverse (`supplier.cancel → payments.void →
   inventory.release`) on any rejection or outage, best-effort over the idempotent
-  leg compensations; unit-tested for every failure position and verified end to
-  end. The compensation gRPC calls now carry the booking trace too (M3); the
-  forced-mid-saga demo across the fully wired stack lands with the broker
-- ◐ Compensations visible as spans — each compensation runs in its own
-  compensation-flagged span under the `Book` SERVER span, and with M3's gRPC
-  propagation the legs' own SERVER spans now fold into the same cross-service
-  trace
+  leg compensations; unit-tested for every failure position (all five injection
+  points) and verified end to end against live leg services over gRPC. The
+  compensation gRPC calls carry the booking trace (M3). A forced failure is
+  demonstrable via the docker-compose stack with the supplier's configurable
+  failure rate (`SUPPLIER_FAILURE_RATE`)
+- ☑ Compensations visible as spans — each compensation runs in its own
+  compensation-flagged span (`signalman.saga.compensation=true`) under the `Book`
+  SERVER span, and with M3's gRPC propagation the legs' own SERVER spans fold
+  into the same cross-service trace
 
-### M5 — Idempotency ◐
+### M5 — Idempotency ☑
 
-- ◐ Inbox dedup; redelivery-safe consumers — reusable `libs/inbox`
+- ☑ Inbox dedup; redelivery-safe consumers — reusable `libs/inbox`
   (`processOnce` dedup contract, in-memory reference store, trace-aware
-  `IdempotentConsumer`) is built and unit-tested, and has its first real consumer:
-  the `notifier` wires an `IdempotentConsumer` (namespace `notifier`) around its
-  `ledger.committed` handler, redelivery-safe and trace-continuing. The dedup is
-  now exercised over the **actual broker boundary** — the `libs/broker`
-  integration test drives a duplicate delivery (→ processed once, second tagged a
-  duplicate) and a NACK (handler throws → broker redelivers → reprocessed) through
-  the consumer, proving effectively-once over at-least-once delivery rather than
-  in isolation. The notifier now **runs this over the broker in the service
-  itself**: a `BrokerSubscriptionHost` subscribes the consumer to
-  `ledger.committed`, and a module-level wiring test drives a redelivered event
-  through the registered host onto a shared broker and asserts the customer is told
-  exactly once. The Postgres-backed `InboxStore` and the reconciler's subscription
-  land with the datastore and the reconciler's source gateway
+  `IdempotentConsumer`) is built and unit-tested. The `notifier` wires an
+  `IdempotentConsumer` (namespace `notifier`) around its `ledger.committed`
+  handler, redelivery-safe and trace-continuing. The dedup is exercised over
+  the **actual broker boundary** — the `libs/broker` integration test drives a
+  duplicate delivery (→ processed once, second tagged a duplicate) and a NACK
+  (handler throws → broker redelivers → reprocessed) through the consumer,
+  proving effectively-once over at-least-once delivery. A module-level wiring
+  test drives a redelivered event through the registered `BrokerSubscriptionHost`
+  and asserts the customer is told exactly once. The Postgres-backed
+  `PostgresInboxStore` (`INSERT … ON CONFLICT DO NOTHING` — race-free dedup
+  committed in the same transaction as the handler's side effects) is built and
+  wired, completing the full Postgres-backed datastore layer for all services
 
-### M6 — Reconciler ◐
+### M6 — Reconciler ☑
 
 - ☑ Periodic comparison of sources of truth (supplier vs ledger vs inventory) —
   the `reconciler` service runs `ReconcilerService.runOnce` on a scheduler, and
@@ -336,13 +333,17 @@ concrete slices needed to call it done.
   straight to the originating trace.
 - ☑ Trace-correlated structured logging (`trace_id`/`span_id`) — `libs/logging`
 
-### M8 — Harden + ship ☐
+### M8 — Harden + ship ◐
 
-- ◐ External-boundary latency/failure injection — the payments `SimulatedPsp`
-  injects controllable latency and decline/failure on the PSP hop, and the
-  supplier `SimulatedSupplierPartner` applies the same pattern to the partner
-  boundary (deliberately slower and flakier defaults), each an errored CLIENT
-  span when it fails; the per-step SLOs and chaos wiring land later
+- ☑ External-boundary latency/failure injection — the payments `SimulatedPsp`
+  injects controllable latency and decline/failure on the PSP hop
+  (`PSP_LATENCY_MS`, `PSP_DECLINE_RATE`, `PSP_FAILURE_RATE`), and the supplier
+  `SimulatedSupplierPartner` applies the same pattern to the partner boundary
+  (deliberately slower and flakier defaults: `SUPPLIER_LATENCY_MS`,
+  `SUPPLIER_REJECT_RATE`, `SUPPLIER_FAILURE_RATE`); each external call is an
+  errored CLIENT span when it fails, observable in the trace and surfaced by the
+  per-step SLO panels in Grafana; a forced supplier failure exercises the saga's
+  compensation path end to end
 - ☐ README trace screenshot including a compensation
 - ☐ Release
 

@@ -131,6 +131,22 @@ describe('async-event hop trace continuity', () => {
     // publish continues the saga step; consume continues the publish.
     expect(parentSpanId(publish!)).toBe(sagaSpan.spanContext().spanId);
     expect(parentSpanId(consume!)).toBe(publish!.spanContext().spanId);
+
+    // 5. Messaging semantic conventions on the publish and consume spans —
+    // the spec's quality checklist: "Spans align to the OTel RPC and messaging
+    // semantic conventions (verified against current semconv)."
+    expect(publish!.attributes).toMatchObject({
+      'messaging.operation.name': 'publish',
+      'messaging.destination.name': 'ledger.committed',
+      'messaging.message.id': 'rec_1',
+      'messaging.system': 'memory',
+    });
+    expect(consume!.attributes).toMatchObject({
+      'messaging.operation.name': 'process',
+      'messaging.destination.name': 'ledger.committed',
+      'messaging.message.id': 'rec_1',
+      'messaging.system': 'memory',
+    });
   });
 
   it('processes a duplicate delivery once — effectively-once over the broker', async () => {

@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-30
+- **Messaging semantic conventions verification** (M3 complete) — the async-event
+  hop test (`libs/broker/src/trace-continuity.spec.ts`) now explicitly asserts
+  the OTel messaging semconv attributes on every publish and consume span:
+  `messaging.operation.name` (`'publish'` on the PRODUCER, `'process'` on the
+  CONSUMER), `messaging.destination.name` (the event subject, e.g.
+  `'ledger.committed'`), `messaging.message.id` (the outbox record id, the dedup
+  key), and `messaging.system` (the transport, e.g. `'memory'` or `'nats'`). This
+  closes the spec's quality-checklist item "Spans align to the OTel RPC and
+  messaging semantic conventions (verified against current semconv)" — gRPC spans
+  were already covered by `libs/interceptor/src/operation.spec.ts`
+  (`rpc.system`/`rpc.service`/`rpc.method`). M3 is now fully done: trace
+  propagation across gRPC, async broker events, and external hops is wired and
+  verified; fan-out spans carry links; all span attributes match current semconv.
+
+### Added — 2026-06-30
 - **Postgres booking store for the gateway** — `PostgresBookingStore` persists
   booking outcomes in a `gateway.bookings` table (booking id, status, request
   fields, trace id, recorded-at, and all optional saga-reference and failure
