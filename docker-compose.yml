@@ -26,9 +26,30 @@ x-broker-env: &broker-env
   BROKER: nats
   NATS_URL: nats://nats:4222
 
+# Each service connects to its own Postgres schema inside a shared instance.
+# The POSTGRES_URL is the same for all; schemas are isolated per service.
+x-pg-env: &pg-env
+  POSTGRES_URL: postgresql://signalman:signalman@postgres:5432/signalman
+
 services:
 
   # ── Infrastructure ─────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: signalman
+      POSTGRES_PASSWORD: signalman
+      POSTGRES_DB: signalman
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signalman -d signalman"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   nats:
     image: nats:2.10-alpine
@@ -90,7 +111,7 @@ services:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: inventory
       INVENTORY_GRPC_URL: "0.0.0.0:50051"
     ports:
@@ -100,12 +121,14 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   payments:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: payments
       PAYMENTS_GRPC_URL: "0.0.0.0:50052"
     ports:
@@ -115,12 +138,14 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   supplier:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: supplier
       SUPPLIER_GRPC_URL: "0.0.0.0:50053"
     ports:
@@ -130,12 +155,14 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   ledger:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: ledger
       LEDGER_GRPC_URL: "0.0.0.0:50054"
     ports:
@@ -145,12 +172,14 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   coordinator:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: coordinator
       COORDINATOR_GRPC_URL: "0.0.0.0:50050"
       INVENTORY_GRPC_URL: "inventory:50051"
@@ -177,19 +206,21 @@ services:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: notifier
     depends_on:
       nats:
         condition: service_healthy
       otel-collector:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   reconciler:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: reconciler
       RECONCILER_INTERVAL_MS: "30000"
     depends_on:
@@ -197,12 +228,14 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   gateway:
     build: .
     image: signalman-app
     environment:
-      <<: [*otel-env, *broker-env]
+      <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: gateway
       PORT: "3000"
       COORDINATOR_GRPC_URL: "coordinator:50050"
@@ -213,8 +246,11 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
       coordinator:
         condition: service_started
 
 volumes:
   tempo-data:
+  postgres-data:

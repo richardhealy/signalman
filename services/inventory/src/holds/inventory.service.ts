@@ -19,7 +19,7 @@
  * commit; a Postgres-backed store swaps in behind the same tokens and gets it from
  * a real database transaction.
  */
-import { createOutboxRecord, runInTransaction, type OutboxStore } from '@signalman/outbox';
+import { createOutboxRecord, runInTransaction, type OutboxStore, type UnitOfWork } from '@signalman/outbox';
 import { randomUUID } from 'node:crypto';
 import { type Hold } from './hold';
 import { type HoldRepository } from './hold-repository';
@@ -59,6 +59,12 @@ export interface InventoryServiceOptions {
   idFactory?: () => string;
   /** Clock for hold timestamps; defaults to `() => new Date()`. */
   clock?: () => Date;
+  /**
+   * Transaction runner. Defaults to the in-memory {@link runInTransaction}.
+   * Swap in `runInPgTransaction` (bound to a `Pool`) to run the hold + outbox
+   * writes inside a real database transaction.
+   */
+  transact?: <T>(work: (tx: UnitOfWork) => Promise<T>) => Promise<T>;
 }
 
 export class InventoryService {
@@ -66,12 +72,14 @@ export class InventoryService {
   private readonly outbox: OutboxStore;
   private readonly idFactory: () => string;
   private readonly clock: () => Date;
+  private readonly transact: <T>(work: (tx: UnitOfWork) => Promise<T>) => Promise<T>;
 
   constructor(options: InventoryServiceOptions) {
     this.holds = options.holds;
     this.outbox = options.outbox;
     this.idFactory = options.idFactory ?? randomUUID;
     this.clock = options.clock ?? (() => new Date());
+    this.transact = options.transact ?? runInTransaction;
   }
 
   /**
@@ -108,7 +116,7 @@ export class InventoryService {
     };
 
     // One transaction: the hold and its event commit together or not at all.
-    await runInTransaction(async (tx) => {
+    await this.transact(async (tx) => {
       await this.holds.commitHold(hold, tx);
       await this.outbox.add(
         createOutboxRecord({
@@ -141,7 +149,7 @@ export class InventoryService {
     const released: Hold = { ...existing, status: 'released', releasedAt: this.clock() };
 
     // One transaction: the release and its event commit together or not at all.
-    await runInTransaction(async (tx) => {
+    await this.transact(async (tx) => {
       await this.holds.commitRelease(released, tx);
       await this.outbox.add(
         createOutboxRecord({

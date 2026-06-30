@@ -24,3 +24,5 @@ export {
   type RelayOutcome,
   type RelayResult,
 } from './relay';
+export { type PgUnitOfWork, runInPgTransaction } from './pg-transaction';
+export { PostgresOutboxStore } from './pg-store';

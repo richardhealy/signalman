@@ -7,6 +7,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-30
+- **Postgres datastore layer** — the spec's "Postgres per service" requirement
+  now has a complete implementation path. `libs/outbox` gains `PostgresOutboxStore`
+  (full outbox lifecycle — staging, `SELECT … FOR UPDATE SKIP LOCKED` claiming,
+  publish marking, dead-lettering — against a `{schema}.outbox_events` table) and
+  the `PgUnitOfWork`/`runInPgTransaction` primitives that replace `runInTransaction`
+  when a real database is in play, so a service's business-state write and its
+  outbox row share one `BEGIN … COMMIT`. `libs/inbox` gains `PostgresInboxStore`
+  (`INSERT … ON CONFLICT DO NOTHING` dedup marker committed in the same transaction
+  as the handler's side effects — race-free under concurrent redelivery).
+  `services/inventory` is the first fully Postgres-wired leg: when `POSTGRES_URL`
+  is set it activates `PostgresHoldRepository` (with `SELECT … FOR UPDATE` oversell
+  guard) and `PostgresOutboxStore` behind the same `HOLD_REPOSITORY`/`OUTBOX_STORE`
+  tokens, using `runInPgTransaction` as the injected `transact` function so the
+  hold write and the outbox row remain atomic. Both Postgres stores are verified in
+  a gated integration test suite (`pg-store.integration.spec.ts`, skipped by
+  default, run with `POSTGRES_TEST_URL` set) covering atomicity, rollback, publish
+  lifecycle, and `SKIP LOCKED` double-claim prevention. The docker-compose stack
+  adds a `postgres:16-alpine` service (single instance, `signalman` database,
+  per-service schemas) with `POSTGRES_URL` propagated to every application
+  container and a `postgres` health check as a dependency gate.
+
+### Added — 2026-06-30
 - **Per-step SLOs in Grafana** (M7) — the "Booking saga — per-step SLOs" section is now wired
   in the Grafana dashboard (`docker/grafana/dashboards/signalman.json`). Fourteen stat panels cover
   every forward step of the booking saga — gateway, coordinator, inventory hold, payments authorize,

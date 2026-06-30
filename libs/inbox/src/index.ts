@@ -5,6 +5,7 @@ export {
   type ProcessOnceOptions,
 } from './store';
 export { InMemoryInboxStore } from './memory-store';
+export { PostgresInboxStore } from './pg-store';
 export {
   IdempotentConsumer,
   type ConsumeResult,

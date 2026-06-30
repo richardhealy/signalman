@@ -144,7 +144,23 @@ concrete slices needed to call it done.
   producing services flows into the reconciler's cross-service snapshot in a running
   stack
 - ☑ OTel Collector — OTLP/HTTP+gRPC receiver, batch processor, OTLP→Tempo exporter, Prometheus exporter for RED metrics
-- ☑ One-command `docker-compose` stack — all eight services + NATS JetStream + OTel Collector + Grafana Tempo + Grafana; single `Dockerfile` builds every service from the monorepo; `docker-compose up` starts the full demo; gateway exposed at `localhost:3000`, Grafana at `localhost:3001`
+- ☑ One-command `docker-compose` stack — all eight services + NATS JetStream + **Postgres** + OTel Collector + Grafana Tempo + Grafana; single `Dockerfile` builds every service from the monorepo; `docker-compose up` starts the full demo; gateway exposed at `localhost:3000`, Grafana at `localhost:3001`
+- ☑ **Postgres datastore layer** — `libs/outbox` gains `PostgresOutboxStore` (full
+  outbox lifecycle against `{schema}.outbox_events` with `SELECT … FOR UPDATE SKIP
+  LOCKED` claiming so concurrent relay instances never double-publish) and
+  `PgUnitOfWork`/`runInPgTransaction` (a pool client mid-transaction so the
+  business-state write and the outbox row share one database transaction — the
+  real-database equivalent of the in-memory `UnitOfWork`). `libs/inbox` gains
+  `PostgresInboxStore` (`INSERT … ON CONFLICT DO NOTHING` dedup inside the
+  handler's own transaction so marker and side effects are atomic). Both are
+  gated integration-tested against a live Postgres (`POSTGRES_TEST_URL`,
+  skipped by default). `services/inventory` wires `PostgresHoldRepository`
+  + `PostgresOutboxStore` behind the existing `HOLD_REPOSITORY`/`OUTBOX_STORE`
+  tokens when `POSTGRES_URL` is set, using `runInPgTransaction` as the injected
+  `transact` function so hold + outbox row share one real transaction — the
+  pattern all other services follow. The docker-compose stack adds a `postgres`
+  service (single instance, per-service schemas in `signalman` database) and
+  propagates `POSTGRES_URL` to every application container.
 
 ### M1 — Happy-path saga ◐
 
@@ -166,8 +182,10 @@ concrete slices needed to call it done.
 - ◐ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
   partner confirmations, wrapping a simulated external partner; ledger owns the
-  financial record (commit/reverse, no external boundary) (in-memory reference
-  stores; the Postgres-backed stores land with the datastore milestone)
+  financial record (commit/reverse, no external boundary). Inventory now ships a
+  Postgres-backed store (`PostgresHoldRepository`) that activates when
+  `POSTGRES_URL` is set; payments, supplier, ledger, and gateway follow the same
+  pattern in subsequent increments.
 
 ### M2 — Outbox ◐
 
