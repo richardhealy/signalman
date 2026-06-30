@@ -361,6 +361,6 @@ deliverable per run.
 
 - ☑ a. Doc comments across the public surface (TSDoc on modules, public functions, types)
 - ☑ b. API reference — `docs/api.md` covering the HTTP surface (gateway POST/GET /bookings, GET /health), all five gRPC services (Coordinator, Inventory, Payments, Supplier, Ledger) with every RPC's request/response fields, the async event catalogue (9 subjects across 4 producing services), and the full environment-variable reference per service
-- ☐ c. Architecture dossier — `docs/architecture.md`
+- ☑ c. Architecture dossier — `docs/architecture.md`
 - ☐ d. Integration guide(s) — `docs/integration.md`
 - ☐ e. Usage/how-to guides, `docs/` index, final `README.md` pass
