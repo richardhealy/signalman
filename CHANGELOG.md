@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-30
+- **Postgres datastore for payments, supplier, ledger, and gateway** — all four
+  remaining services now activate Postgres-backed stores when `POSTGRES_URL` is
+  set, completing the "Postgres per service" requirement. `payments` gains
+  `PostgresPaymentRepository` (upserts authorizations, captures, and voids to
+  `payments.payments`); `supplier` gains `PostgresConfirmationRepository`
+  (confirmations and cancellations in `supplier.confirmations`); `ledger` gains
+  `PostgresLedgerRepository` (committed and reversed entries in `ledger.entries`);
+  `gateway` gains `PostgresBookingStore` (last-wins JSONB upsert in
+  `gateway.bookings`). Each service runs `ensureSchema` on bootstrap, wires the
+  Postgres store behind the existing DI token (falling back to the in-memory
+  reference when `POSTGRES_URL` is absent), and threads `runInPgTransaction` into
+  `PaymentsService`, `SupplierService`, and `LedgerService` via their new `transact`
+  option, so the domain write and the outbox row still share one real database
+  transaction. All four producing legs now have the same transactional-outbox
+  guarantee in Postgres as the inventory leg.
+
+### Added — 2026-06-30
 - **Postgres datastore layer** — the spec's "Postgres per service" requirement
   now has a complete implementation path. `libs/outbox` gains `PostgresOutboxStore`
   (full outbox lifecycle — staging, `SELECT … FOR UPDATE SKIP LOCKED` claiming,

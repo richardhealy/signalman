@@ -2,16 +2,20 @@
  * Wiring for the supplier leg of the saga.
  *
  * It binds the gRPC {@link SupplierController} to a {@link SupplierService}
- * backed by the in-memory confirmation repository and outbox store, calling a
+ * backed by the configured confirmation repository and outbox store, calling a
  * {@link SimulatedSupplierPartner} for the external boundary, and runs an
  * {@link OutboxRelayHost} that drains the staged
  * `supplier.confirmed`/`.cancelled` events onto the configured broker. The broker
  * is chosen from the environment ({@link createBrokerFromEnv} — in-memory by
  * default, NATS when `BROKER=nats`), so the same wiring serves the unit suite and
- * the docker-compose stack. The in-memory stores are the reference
- * implementations the `@signalman/*` libraries ship; the Postgres-backed stores
- * swap in here behind the same {@link CONFIRMATION_REPOSITORY}/{@link OUTBOX_STORE}
- * tokens with the datastore milestone.
+ * the docker-compose stack.
+ *
+ * **Datastore selection** — driven by `POSTGRES_URL`:
+ * - When set, a `Pool` connects to Postgres and the service uses
+ *   {@link PostgresConfirmationRepository} and {@link PostgresOutboxStore} backed
+ *   by the `supplier` schema. The tables are created (if absent) on bootstrap.
+ * - When absent, the in-memory reference stores stand in, keeping the unit
+ *   suite and a single-process demo free of any infrastructure dependency.
  *
  * The partner's latency and failure rates are read from the environment so the
  * demo can dial divergence up or down without code changes; the defaults inject
@@ -24,11 +28,19 @@ import {
   OutboxRelayHost,
   type BrokerFromEnvResult,
 } from '@signalman/broker';
-import { InMemoryOutboxStore, type OutboxStore } from '@signalman/outbox';
+import {
+  InMemoryOutboxStore,
+  PostgresOutboxStore,
+  runInPgTransaction,
+  type OutboxStore,
+  type UnitOfWork,
+} from '@signalman/outbox';
+import { Pool } from 'pg';
 import {
   InMemoryConfirmationRepository,
   type ConfirmationRepository,
 } from './confirmation-repository';
+import { PostgresConfirmationRepository } from './pg-confirmation-repository';
 import { SimulatedSupplierPartner, type SupplierPartner } from './partner';
 import { SupplierController } from './supplier.controller';
 import { SupplierService } from './supplier.service';
@@ -55,14 +67,44 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+/** Returns the transaction runner to inject into {@link SupplierService}. */
+function makeTransact(
+  pool: Pool | undefined,
+): (<T>(work: (tx: UnitOfWork) => Promise<T>) => Promise<T>) | undefined {
+  if (!pool) return undefined;
+  return <T>(work: (tx: UnitOfWork) => Promise<T>): Promise<T> =>
+    runInPgTransaction(pool, (pgTx) => work(pgTx));
+}
+
 @Module({
   controllers: [SupplierController],
   providers: [
     {
       provide: CONFIRMATION_REPOSITORY,
-      useFactory: (): ConfirmationRepository => new InMemoryConfirmationRepository(),
+      useFactory: async (): Promise<ConfirmationRepository> => {
+        const url = process.env.POSTGRES_URL;
+        if (url) {
+          const pool = new Pool({ connectionString: url });
+          const repo = new PostgresConfirmationRepository(pool, 'supplier');
+          await repo.ensureSchema();
+          return repo;
+        }
+        return new InMemoryConfirmationRepository();
+      },
     },
-    { provide: OUTBOX_STORE, useFactory: (): OutboxStore => new InMemoryOutboxStore() },
+    {
+      provide: OUTBOX_STORE,
+      useFactory: async (): Promise<OutboxStore> => {
+        const url = process.env.POSTGRES_URL;
+        if (url) {
+          const pool = new Pool({ connectionString: url });
+          const store = new PostgresOutboxStore(pool, 'supplier');
+          await store.ensureSchema();
+          return store;
+        }
+        return new InMemoryOutboxStore();
+      },
+    },
     {
       provide: SUPPLIER_PARTNER,
       useFactory: (): SupplierPartner =>
@@ -78,7 +120,11 @@ function envNumber(name: string, fallback: number): number {
         confirmations: ConfirmationRepository,
         outbox: OutboxStore,
         partner: SupplierPartner,
-      ): SupplierService => new SupplierService({ confirmations, outbox, partner }),
+      ): SupplierService => {
+        const url = process.env.POSTGRES_URL;
+        const pool = url ? new Pool({ connectionString: url }) : undefined;
+        return new SupplierService({ confirmations, outbox, partner, transact: makeTransact(pool) });
+      },
       inject: [CONFIRMATION_REPOSITORY, OUTBOX_STORE, SUPPLIER_PARTNER],
     },
     { provide: MESSAGE_BROKER, useFactory: (): Promise<BrokerFromEnvResult> => createBrokerFromEnv() },

@@ -179,17 +179,19 @@ concrete slices needed to call it done.
   off the configured broker** (`BrokerSubscriptionHost`) and notifies the customer
   — so the saga's tail is wired end to end over the broker, in-process under the
   in-memory default and cross-service under `BROKER=nats`
-- ◐ Per-service state — inventory owns holds and per-SKU availability; payments
+- ☑ Per-service state — inventory owns holds and per-SKU availability; payments
   owns authorizations and captures, wrapping a simulated PSP; supplier owns
   partner confirmations, wrapping a simulated external partner; ledger owns the
-  financial record (commit/reverse, no external boundary). Inventory now ships a
-  Postgres-backed store (`PostgresHoldRepository`) that activates when
-  `POSTGRES_URL` is set; payments, supplier, ledger, and gateway follow the same
-  pattern in subsequent increments.
+  financial record (commit/reverse, no external boundary). All four producing legs
+  and the gateway now ship Postgres-backed stores (`PostgresPaymentRepository`,
+  `PostgresConfirmationRepository`, `PostgresLedgerRepository`,
+  `PostgresBookingStore`) that activate when `POSTGRES_URL` is set — each service
+  runs `ensureSchema` on bootstrap and swaps in behind the same DI tokens as the
+  in-memory reference.
 
 ### M2 — Outbox ◐
 
-- ◐ Transactional outbox table + relay per service — reusable `libs/outbox`
+- ☑ Transactional outbox table + relay per service — reusable `libs/outbox`
   (record staging, store contract, trace-aware relay) is built and unit-tested;
   the inventory service stages `inventory.held`/`inventory.released`, the
   payments service stages `payment.authorized`/`.captured`/`.voided`, the
@@ -204,8 +206,9 @@ concrete slices needed to call it done.
   bootstrap and tears down on shutdown — so staged events actually publish in a
   running service, not just in lib tests. The **first consuming-side subscription
   is now wired too**: the notifier registers a `BrokerSubscriptionHost` that
-  subscribes its idempotent consumer to `ledger.committed`. The Postgres-backed
-  `OutboxStore` and the reconciler's broker-backed source gateway land next
+  subscribes its idempotent consumer to `ledger.committed`. All four producing
+  legs now use `PostgresOutboxStore` (activating via `POSTGRES_URL`) for durable
+  outbox persistence
 - ☑ Transactional staging (the "transactional" in transactional outbox) —
   `runInTransaction` threads a `UnitOfWork` through a service's business-state
   write and the outbox `add` it accompanies so the two **commit together or not
@@ -296,8 +299,9 @@ concrete slices needed to call it done.
   itself**: a `BrokerSubscriptionHost` subscribes the consumer to
   `ledger.committed`, and a module-level wiring test drives a redelivered event
   through the registered host onto a shared broker and asserts the customer is told
-  exactly once. The Postgres-backed `InboxStore` and the reconciler's subscription
-  land with the datastore and the reconciler's source gateway
+  exactly once. The Postgres-backed `InboxStore` (`PostgresInboxStore`) is
+  available in `libs/inbox` behind the same `InboxStore` token for services that
+  need atomic marker + side-effect dedup in a real database transaction
 
 ### M6 — Reconciler ◐
 

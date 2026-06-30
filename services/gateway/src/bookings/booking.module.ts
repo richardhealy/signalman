@@ -3,14 +3,22 @@
  *
  * It binds the {@link BookingController} (the HTTP entry point) to a
  * {@link BookingService} that drives the live coordinator over gRPC and records
- * outcomes in the in-memory {@link BookingStore} reference. The coordinator's
- * dial address is env-overridable (`COORDINATOR_GRPC_URL`) so docker-compose can
- * address it by service name; the connection is lazy, so the gateway boots even
- * before the coordinator is up. The Postgres-backed booking store swaps in here
- * behind the same {@link BOOKING_STORE} token with the datastore milestone.
+ * outcomes in the configured {@link BookingStore}. The coordinator's dial address
+ * is env-overridable (`COORDINATOR_GRPC_URL`) so docker-compose can address it by
+ * service name; the connection is lazy, so the gateway boots even before the
+ * coordinator is up.
+ *
+ * **Datastore selection** — driven by `POSTGRES_URL`:
+ * - When set, a `Pool` connects to Postgres and the service uses
+ *   {@link PostgresBookingStore} backed by the `gateway` schema. The table is
+ *   created (if absent) on bootstrap.
+ * - When absent, the in-memory reference store stands in, keeping the unit
+ *   suite and a single-process demo free of any infrastructure dependency.
  */
 import { Module } from '@nestjs/common';
+import { Pool } from 'pg';
 import { type BookingStore, BOOKING_STORE, InMemoryBookingStore } from './booking-store';
+import { PostgresBookingStore } from './pg-booking-store';
 import { BookingController } from './booking.controller';
 import { BookingService } from './booking.service';
 import { createCoordinatorCall, GrpcCoordinatorPort } from './coordinator-client';
@@ -27,7 +35,19 @@ const COORDINATOR_URL = process.env.COORDINATOR_GRPC_URL ?? 'localhost:50050';
       useFactory: (): CoordinatorPort =>
         new GrpcCoordinatorPort(createCoordinatorCall({ url: COORDINATOR_URL })),
     },
-    { provide: BOOKING_STORE, useFactory: (): BookingStore => new InMemoryBookingStore() },
+    {
+      provide: BOOKING_STORE,
+      useFactory: async (): Promise<BookingStore> => {
+        const url = process.env.POSTGRES_URL;
+        if (url) {
+          const pool = new Pool({ connectionString: url });
+          const store = new PostgresBookingStore(pool, 'gateway');
+          await store.ensureSchema();
+          return store;
+        }
+        return new InMemoryBookingStore();
+      },
+    },
     {
       provide: BookingService,
       useFactory: (coordinator: CoordinatorPort, store: BookingStore): BookingService =>

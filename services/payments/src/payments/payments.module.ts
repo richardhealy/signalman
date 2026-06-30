@@ -2,16 +2,20 @@
  * Wiring for the payments leg of the saga.
  *
  * It binds the gRPC {@link PaymentsController} to a {@link PaymentsService}
- * backed by the in-memory payment repository and outbox store, calling a
+ * backed by the configured payment repository and outbox store, calling a
  * {@link SimulatedPsp} for the external boundary, and runs an
  * {@link OutboxRelayHost} that drains the staged
  * `payment.authorized`/`.captured`/`.voided` events onto the configured broker.
  * The broker is chosen from the environment ({@link createBrokerFromEnv} —
  * in-memory by default, NATS when `BROKER=nats`), so the same wiring serves the
- * unit suite and the docker-compose stack. The in-memory stores are the reference
- * implementations the `@signalman/*` libraries ship; the Postgres-backed stores
- * swap in here behind the same {@link PAYMENT_REPOSITORY}/{@link OUTBOX_STORE}
- * tokens with the datastore milestone.
+ * unit suite and the docker-compose stack.
+ *
+ * **Datastore selection** — driven by `POSTGRES_URL`:
+ * - When set, a `Pool` connects to Postgres and the service uses
+ *   {@link PostgresPaymentRepository} and {@link PostgresOutboxStore} backed by
+ *   the `payments` schema. The tables are created (if absent) on bootstrap.
+ * - When absent, the in-memory reference stores stand in, keeping the unit
+ *   suite and a single-process demo free of any infrastructure dependency.
  *
  * The PSP's latency and failure rates are read from the environment so the demo
  * can dial divergence up or down without code changes; the defaults inject
@@ -23,8 +27,16 @@ import {
   OutboxRelayHost,
   type BrokerFromEnvResult,
 } from '@signalman/broker';
-import { InMemoryOutboxStore, type OutboxStore } from '@signalman/outbox';
+import {
+  InMemoryOutboxStore,
+  PostgresOutboxStore,
+  runInPgTransaction,
+  type OutboxStore,
+  type UnitOfWork,
+} from '@signalman/outbox';
+import { Pool } from 'pg';
 import { InMemoryPaymentRepository, type PaymentRepository } from './payment-repository';
+import { PostgresPaymentRepository } from './pg-payment-repository';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { SimulatedPsp, type Psp } from './psp';
@@ -51,14 +63,44 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+/** Returns the transaction runner to inject into {@link PaymentsService}. */
+function makeTransact(
+  pool: Pool | undefined,
+): (<T>(work: (tx: UnitOfWork) => Promise<T>) => Promise<T>) | undefined {
+  if (!pool) return undefined;
+  return <T>(work: (tx: UnitOfWork) => Promise<T>): Promise<T> =>
+    runInPgTransaction(pool, (pgTx) => work(pgTx));
+}
+
 @Module({
   controllers: [PaymentsController],
   providers: [
     {
       provide: PAYMENT_REPOSITORY,
-      useFactory: (): PaymentRepository => new InMemoryPaymentRepository(),
+      useFactory: async (): Promise<PaymentRepository> => {
+        const url = process.env.POSTGRES_URL;
+        if (url) {
+          const pool = new Pool({ connectionString: url });
+          const repo = new PostgresPaymentRepository(pool, 'payments');
+          await repo.ensureSchema();
+          return repo;
+        }
+        return new InMemoryPaymentRepository();
+      },
     },
-    { provide: OUTBOX_STORE, useFactory: (): OutboxStore => new InMemoryOutboxStore() },
+    {
+      provide: OUTBOX_STORE,
+      useFactory: async (): Promise<OutboxStore> => {
+        const url = process.env.POSTGRES_URL;
+        if (url) {
+          const pool = new Pool({ connectionString: url });
+          const store = new PostgresOutboxStore(pool, 'payments');
+          await store.ensureSchema();
+          return store;
+        }
+        return new InMemoryOutboxStore();
+      },
+    },
     {
       provide: PSP,
       useFactory: (): Psp =>
@@ -70,8 +112,11 @@ function envNumber(name: string, fallback: number): number {
     },
     {
       provide: PaymentsService,
-      useFactory: (payments: PaymentRepository, outbox: OutboxStore, psp: Psp): PaymentsService =>
-        new PaymentsService({ payments, outbox, psp }),
+      useFactory: (payments: PaymentRepository, outbox: OutboxStore, psp: Psp): PaymentsService => {
+        const url = process.env.POSTGRES_URL;
+        const pool = url ? new Pool({ connectionString: url }) : undefined;
+        return new PaymentsService({ payments, outbox, psp, transact: makeTransact(pool) });
+      },
       inject: [PAYMENT_REPOSITORY, OUTBOX_STORE, PSP],
     },
     { provide: MESSAGE_BROKER, useFactory: (): Promise<BrokerFromEnvResult> => createBrokerFromEnv() },
