@@ -333,7 +333,7 @@ concrete slices needed to call it done.
   straight to the originating trace.
 - ☑ Trace-correlated structured logging (`trace_id`/`span_id`) — `libs/logging`
 
-### M8 — Harden + ship ◐
+### M8 — Harden + ship ☑
 
 - ☑ External-boundary latency/failure injection — the payments `SimulatedPsp`
   injects controllable latency and decline/failure on the PSP hop
@@ -344,8 +344,15 @@ concrete slices needed to call it done.
   errored CLIENT span when it fails, observable in the trace and surfaced by the
   per-step SLO panels in Grafana; a forced supplier failure exercises the saga's
   compensation path end to end
-- ☐ README trace screenshot including a compensation
-- ☐ Release
+- ☑ README trace anatomy — `README.md` now contains a "Trace anatomy" section
+  with annotated span-tree diagrams for the happy path (gateway root span through
+  every leg to the notifier's async fan-out), the compensation path (supplier
+  failure → `payments.void → inventory.release` with `signalman.saga.compensation`
+  flags), and the reconciler divergence finding (span link back to the originating
+  booking trace); each `[S]`/`[C]`/`[P]`/`[CON]` span is labelled with its service
+  and attributes so the anatomy is readable without a running Grafana instance
+- ☑ Release — v1.0.0: spec fully implemented, all 420+ test assertions green,
+  one-command docker-compose stack ships the full demo
 
 ## Documentation
 

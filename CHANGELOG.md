@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0] — 2026-06-30
+
+### Added — 2026-06-30
+- **Trace anatomy and v1.0.0 release** (M8 complete) — `README.md` gains a
+  "Trace anatomy" section with annotated span-tree diagrams covering all three
+  key scenarios: the **happy-path** (gateway root `[S]` → coordinator `Book` →
+  every leg gRPC pair → ledger outbox PRODUCER `[P]` → notifier fan-out CONSUMER
+  `[CON]` including the simulated-provider CLIENT hop), the **compensation path**
+  (supplier failure → `saga.compensation.*` spans flagged
+  `signalman.saga.compensation=true` for `supplier.cancel → payments.void →
+  inventory.release`), and the **reconciler divergence** (`reconcile.divergence`
+  span carrying a span link back to the originating booking trace so Tempo's
+  link-navigation jumps straight to the root cause). Each span is labelled with
+  its service, type (`[S]`/`[C]`/`[P]`/`[CON]`), and key attributes, making the
+  trace anatomy readable without a running Grafana instance. The Status section is
+  updated to reflect the completed v1.0.0 milestone table. Marks M8 fully done and
+  closes the spec's definition-of-done checklist.
+
 ## [Unreleased]
 
 ### Added — 2026-06-30
