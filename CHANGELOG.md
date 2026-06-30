@@ -25,6 +25,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Documentation — 2026-06-30
+- **Usage/how-to guides, `docs/` index, and final `README.md` pass** — `docs/index.md`
+  is added as the documentation hub: a table linking to all three existing documents
+  (api.md, architecture.md, integration.md), four self-contained how-to guides
+  (trigger a booking and trace it; force a compensation; induce a reconciler divergence;
+  run without Docker), a key-concepts table pointing into the architecture dossier, and
+  instructions for running the default and gated integration test suites. `README.md`
+  gains a "Documentation" table near the top that links to `docs/index.md` and all
+  three docs/ files so newcomers land on the right page, a callout in "Getting started"
+  pointing to the integration guide and docs index for step-by-step walkthroughs, and
+  an expanded "Development" section referencing the gated tests and linking back to the
+  docs. Marks documentation item (e) done — the documentation phase is complete.
+
+### Documentation — 2026-06-30
 - **Integration guide** (`docs/integration.md`) — complete guide for standing the system up and integrating against it: prerequisites and the one-command `docker-compose up` workflow; how to trigger a booking, read back its status, and browse the connected trace in Grafana Tempo; how to force a compensation path via supplier failure injection and read the compensation spans; how to induce and observe a reconciler divergence finding via span links; calling the gateway HTTP API from external code (with W3C trace-context propagation); calling every gRPC surface directly with `grpcurl` examples; running all eight services locally without Docker; per-library reuse recipes for all seven `@signalman/*` libraries (`otel`, `logging`, `interceptor`, `outbox`, `inbox`, `broker` — including Postgres-backed variants and env-driven transport selection); and a complete per-service environment variable reference. Marks documentation item (d) done.
 
 ### Documentation — 2026-06-30

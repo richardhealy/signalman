@@ -12,8 +12,14 @@ was never released. `signalman` makes one booking one connected trace across eve
 hop, and runs a reconciler that compares the sources of truth and links any drift
 back to the originating trace.
 
-See [`spec.md`](spec.md) for the full design and [`PROGRESS.md`](PROGRESS.md) for
-current status.
+## Documentation
+
+| Document | What it covers |
+|----------|----------------|
+| **[docs/index.md](docs/index.md)** | How-to guides and the full docs index — start here |
+| **[docs/api.md](docs/api.md)** | HTTP API, gRPC surfaces, async event catalogue, env vars |
+| **[docs/architecture.md](docs/architecture.md)** | Component map, data flow, design decisions, library internals |
+| **[docs/integration.md](docs/integration.md)** | Stand the system up, call it, observe it, reuse the patterns |
 
 ## Status
 
@@ -753,6 +759,10 @@ lands with later milestones, behind the same DI tokens.
 
 ## Getting started
 
+> For a step-by-step walkthrough that covers forcing a compensation, inducing a
+> divergence, and calling the services from your own code, see
+> **[docs/index.md](docs/index.md)** and **[docs/integration.md](docs/integration.md)**.
+
 Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
 
 ```bash
@@ -906,6 +916,15 @@ findings are all live and exercised by the unit tests.
 ## Development
 
 - **Tests** live next to the code as `*.spec.ts` and run under Jest + ts-jest.
+  Three suites are gated (NATS and Postgres integration tests) and skipped by
+  default so `npm test` is always green without infrastructure.
 - **Build** uses `nest build <project>`; output lands in `dist/`.
+- **Lint and typecheck** run with `npm run lint` (ESLint flat config) and
+  `npm run typecheck` (tsc --noEmit across the workspace).
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs install,
   lint, typecheck, build, and test on every push and pull request.
+
+See **[docs/index.md](docs/index.md)** for the full documentation index, how-to
+guides, and instructions for running the gated integration tests.
+See **[docs/architecture.md](docs/architecture.md)** for the component map and
+design decisions, and **[docs/api.md](docs/api.md)** for the API reference.
