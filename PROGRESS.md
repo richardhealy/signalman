@@ -360,7 +360,7 @@ Reached once the spec is fully implemented and the suite is green. One
 deliverable per run.
 
 - ☑ a. Doc comments across the public surface (TSDoc on modules, public functions, types)
-- ☐ b. API reference (HTTP/gRPC reference + generated TypeDoc where useful)
+- ☑ b. API reference (HTTP/gRPC reference + generated TypeDoc where useful)
 - ☐ c. Architecture dossier — `docs/architecture.md`
 - ☐ d. Integration guide(s) — `docs/integration.md`
 - ☐ e. Usage/how-to guides, `docs/` index, final `README.md` pass

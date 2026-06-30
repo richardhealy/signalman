@@ -25,6 +25,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Documentation — 2026-06-30
+- **API reference** (`docs/api.md`) — complete reference for the HTTP surface
+  (gateway `POST /bookings`, `GET /bookings/:id`, `GET /health`) and all five
+  internal gRPC contracts (Coordinator `Book`; Inventory `Hold`/`Release`;
+  Payments `Authorize`/`Capture`/`Void`; Supplier `Confirm`/`Cancel`; Ledger
+  `Commit`/`Reverse`). Covers request and reply shapes, field-level
+  descriptions, HTTP status and gRPC error codes, business rejection reason
+  catalogue, trace propagation mechanics, and the async-event subject table.
+  Marks documentation item (b) done.
+
+### Documentation — 2026-06-30
 - **TSDoc package-level comments on all library barrel files** — each `index.ts`
   in `libs/otel`, `libs/propagation`, `libs/logging`, `libs/interceptor`,
   `libs/outbox`, `libs/inbox`, and `libs/broker` now carries a
