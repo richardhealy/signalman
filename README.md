@@ -12,6 +12,16 @@ was never released. `signalman` makes one booking one connected trace across eve
 hop, and runs a reconciler that compares the sources of truth and links any drift
 back to the originating trace.
 
+## Documentation
+
+| Document | What it covers |
+|----------|---------------|
+| [docs/integration.md](docs/integration.md) | One-command setup, curl walkthroughs, grpcurl examples, library reuse recipes |
+| [docs/api.md](docs/api.md) | HTTP API, gRPC service contracts, async event catalogue, env vars |
+| [docs/architecture.md](docs/architecture.md) | Component map, data/control flow, design decisions, spec-to-code map |
+| [docs/how-to.md](docs/how-to.md) | Developer workflows, Grafana navigation, failure diagnosis, troubleshooting |
+| [docs/index.md](docs/index.md) | Docs hub — all documents with descriptions and key concepts |
+
 See [`spec.md`](spec.md) for the full design and [`PROGRESS.md`](PROGRESS.md) for
 current status.
 

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.0.0] — 2026-06-30
 
+### Documentation — 2026-06-30
+- **Usage/how-to guides, docs index, and final README pass** — `docs/how-to.md`
+  covers developer workflows (running tests, integration-gated suites, typecheck,
+  lint, build), running all eight services locally with or without Docker and with
+  NATS, observing a booking trace in Grafana Tempo (finding the trace, reading the
+  span tree, jumping from metrics to traces via exemplars), diagnosing a failed
+  booking (failed-step identification, compensation span reading, error attributes),
+  understanding a reconciler divergence finding (finding spans in Tempo, navigating
+  the span link back to the originating booking trace), tuning failure injection for
+  all three simulated boundaries, and common issues with fixes. `docs/index.md` is
+  a documentation hub linking to all four docs with one-line descriptions and a
+  key-concepts summary. `README.md` gains a prominent Documentation table near the
+  top linking to all docs. Marks documentation item (e) done — all five
+  documentation deliverables are complete.
+
 ### Added — 2026-06-30
 - **Trace anatomy and v1.0.0 release** (M8 complete) — `README.md` gains a
   "Trace anatomy" section with annotated span-tree diagrams covering all three
