@@ -1,4 +1,4 @@
-# signalman
+# Signalman
 
 > Observability and reconciliation for a distributed booking platform. Trace one
 > booking end to end across synchronous gRPC and asynchronous events, and surface
