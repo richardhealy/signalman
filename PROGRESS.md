@@ -298,9 +298,21 @@ concrete slices needed to call it done.
   `traceId`, so a finding is navigable straight back to the trace that explains
   it, even though the reconciler runs out-of-band on its own trace
 
-### M7 — Metrics + logs ◐
+### M7 — Metrics + logs ☑
 
-- ◐ RED metrics and per-step SLOs in Grafana (RED instrumentation lives in `libs/interceptor`; Grafana dashboards/SLOs still to wire)
+- ☑ RED metrics and per-step SLOs in Grafana — `libs/interceptor` provides the RED
+  instrumentation (duration histogram + error counter, tagged `operation`/`service_name`/`outcome`);
+  `docker/grafana/dashboards/signalman.json` now includes a **Per-step SLOs** section with
+  stat panels for each saga step (p99 latency + error rate), threshold-coloured green/red
+  against the per-step SLO targets. Grafana alert rules in
+  `docker/grafana/provisioning/alerting/slo-alerts.yaml` fire when any step breaches its SLO
+  for 5 minutes, labelled by `slo_step` and `slo_type` so they are navigable back to the
+  offending service. SLO targets per step:
+  - Inventory Hold: p99 ≤ 500 ms, error rate ≤ 1%
+  - Payment Authorize: p99 ≤ 3 s, error rate ≤ 5%
+  - Supplier Confirm: p99 ≤ 7.5 s, error rate ≤ 10%
+  - Payment Capture: p99 ≤ 500 ms, error rate ≤ 1%
+  - Ledger Commit: p99 ≤ 250 ms, error rate ≤ 0.5%
 - ☑ Trace-correlated structured logging (`trace_id`/`span_id`) — `libs/logging`
 
 ### M8 — Harden + ship ☐

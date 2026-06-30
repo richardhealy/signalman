@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — 2026-06-30
+- **Per-step SLOs in Grafana** (M7) — the Grafana dashboard
+  (`docker/grafana/dashboards/signalman.json`) gains a **Per-step SLOs** section
+  with threshold-coloured stat panels for all five saga steps: Inventory Hold (p99
+  ≤ 500 ms, err ≤ 1%), Payment Authorize (p99 ≤ 3 s, err ≤ 5%), Supplier Confirm
+  (p99 ≤ 7.5 s, err ≤ 10%), Payment Capture (p99 ≤ 500 ms, err ≤ 1%), and Ledger
+  Commit (p99 ≤ 250 ms, err ≤ 0.5%). Each panel is green when the SLO is met and
+  turns red on breach. Grafana alert rules
+  (`docker/grafana/provisioning/alerting/slo-alerts.yaml`) fire after 5 minutes of
+  continuous SLO breach, labelled `slo_step` / `slo_type` so each alert is
+  traceable to the originating service. This completes milestone M7 — RED metrics
+  and per-step SLOs render in Grafana with trace-correlated logs already in place.
+
 ### Added — 2026-06-29
 - **Reconciler broker-backed SourceOfTruthGateway** (M6) — the reconciler now
   receives real source-of-truth events from the producing services rather than

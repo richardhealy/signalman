@@ -1,0 +1,404 @@
+apiVersion: 1
+
+# Contact point — logs to stderr in the demo stack (no real email needed).
+contactPoints:
+  - orgId: 1
+    name: signalman-log
+    receivers:
+      - uid: signalman-log-receiver
+        type: email
+        settings:
+          addresses: ops@signalman.internal
+        disableResolveMessage: false
+
+# Default notification policy — all firing alerts go to the log receiver.
+policies:
+  - orgId: 1
+    receiver: signalman-log
+    group_by: [alertname, slo_step]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 1h
+
+# Per-step SLO alert rules.
+groups:
+  - orgId: 1
+    name: signalman-slos
+    folder: Signalman
+    interval: 1m
+    rules:
+
+      # ── Inventory Hold ──────────────────────────────────────────────────────
+
+      - uid: slo-inventory-hold-p99
+        title: "Inventory Hold p99 > 500 ms (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                histogram_quantile(0.99, sum by (le) (
+                  rate(signalman_signalman_operation_duration_seconds_bucket{operation="InventoryController/hold"}[5m])
+                ))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: inventory_hold, slo_type: latency }
+        annotations:
+          summary: "Inventory Hold p99 latency is breaching the 500 ms SLO"
+          description: "The p99 latency for InventoryController/hold exceeded 500 ms for 5 minutes."
+        isPaused: false
+
+      - uid: slo-inventory-hold-errors
+        title: "Inventory Hold error rate > 1% (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                sum(rate(signalman_signalman_operation_errors_total{operation="InventoryController/hold"}[5m]))
+                / sum(rate(signalman_signalman_operation_duration_seconds_count{operation="InventoryController/hold"}[5m]))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.01] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: inventory_hold, slo_type: errors }
+        annotations:
+          summary: "Inventory Hold error rate is breaching the 1% SLO"
+          description: "The error rate for InventoryController/hold exceeded 1% for 5 minutes."
+        isPaused: false
+
+      # ── Payment Authorize ───────────────────────────────────────────────────
+
+      - uid: slo-payments-authorize-p99
+        title: "Payment Authorize p99 > 3 s (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                histogram_quantile(0.99, sum by (le) (
+                  rate(signalman_signalman_operation_duration_seconds_bucket{operation="PaymentsController/authorize"}[5m])
+                ))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [3.0] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: payments_authorize, slo_type: latency }
+        annotations:
+          summary: "Payment Authorize p99 latency is breaching the 3 s SLO"
+          description: "The p99 latency for PaymentsController/authorize exceeded 3 s for 5 minutes."
+        isPaused: false
+
+      - uid: slo-payments-authorize-errors
+        title: "Payment Authorize error rate > 5% (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                sum(rate(signalman_signalman_operation_errors_total{operation="PaymentsController/authorize"}[5m]))
+                / sum(rate(signalman_signalman_operation_duration_seconds_count{operation="PaymentsController/authorize"}[5m]))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.05] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: payments_authorize, slo_type: errors }
+        annotations:
+          summary: "Payment Authorize error rate is breaching the 5% SLO"
+          description: "The error rate for PaymentsController/authorize exceeded 5% for 5 minutes."
+        isPaused: false
+
+      # ── Supplier Confirm ────────────────────────────────────────────────────
+
+      - uid: slo-supplier-confirm-p99
+        title: "Supplier Confirm p99 > 7.5 s (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                histogram_quantile(0.99, sum by (le) (
+                  rate(signalman_signalman_operation_duration_seconds_bucket{operation="SupplierController/confirm"}[5m])
+                ))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [7.5] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: supplier_confirm, slo_type: latency }
+        annotations:
+          summary: "Supplier Confirm p99 latency is breaching the 7.5 s SLO"
+          description: "The p99 latency for SupplierController/confirm exceeded 7.5 s for 5 minutes. The supplier partner is deliberately slow; this may indicate abnormal degradation."
+        isPaused: false
+
+      - uid: slo-supplier-confirm-errors
+        title: "Supplier Confirm error rate > 10% (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                sum(rate(signalman_signalman_operation_errors_total{operation="SupplierController/confirm"}[5m]))
+                / sum(rate(signalman_signalman_operation_duration_seconds_count{operation="SupplierController/confirm"}[5m]))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.10] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: supplier_confirm, slo_type: errors }
+        annotations:
+          summary: "Supplier Confirm error rate is breaching the 10% SLO"
+          description: "The error rate for SupplierController/confirm exceeded 10% for 5 minutes."
+        isPaused: false
+
+      # ── Payment Capture ─────────────────────────────────────────────────────
+
+      - uid: slo-payments-capture-p99
+        title: "Payment Capture p99 > 500 ms (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                histogram_quantile(0.99, sum by (le) (
+                  rate(signalman_signalman_operation_duration_seconds_bucket{operation="PaymentsController/capture"}[5m])
+                ))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: payments_capture, slo_type: latency }
+        annotations:
+          summary: "Payment Capture p99 latency is breaching the 500 ms SLO"
+          description: "The p99 latency for PaymentsController/capture exceeded 500 ms for 5 minutes."
+        isPaused: false
+
+      - uid: slo-payments-capture-errors
+        title: "Payment Capture error rate > 1% (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                sum(rate(signalman_signalman_operation_errors_total{operation="PaymentsController/capture"}[5m]))
+                / sum(rate(signalman_signalman_operation_duration_seconds_count{operation="PaymentsController/capture"}[5m]))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.01] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: payments_capture, slo_type: errors }
+        annotations:
+          summary: "Payment Capture error rate is breaching the 1% SLO"
+          description: "The error rate for PaymentsController/capture exceeded 1% for 5 minutes."
+        isPaused: false
+
+      # ── Ledger Commit ───────────────────────────────────────────────────────
+
+      - uid: slo-ledger-commit-p99
+        title: "Ledger Commit p99 > 250 ms (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                histogram_quantile(0.99, sum by (le) (
+                  rate(signalman_signalman_operation_duration_seconds_bucket{operation="LedgerController/commit"}[5m])
+                ))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.25] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: ledger_commit, slo_type: latency }
+        annotations:
+          summary: "Ledger Commit p99 latency is breaching the 250 ms SLO"
+          description: "The p99 latency for LedgerController/commit exceeded 250 ms for 5 minutes. The ledger has no external dependencies; this may indicate a data or infra issue."
+        isPaused: false
+
+      - uid: slo-ledger-commit-errors
+        title: "Ledger Commit error rate > 0.5% (SLO breach)"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >
+                sum(rate(signalman_signalman_operation_errors_total{operation="LedgerController/commit"}[5m]))
+                / sum(rate(signalman_signalman_operation_duration_seconds_count{operation="LedgerController/commit"}[5m]))
+              intervalMs: 60000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: classic_conditions
+              refId: B
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.005] }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        labels: { severity: warning, slo_step: ledger_commit, slo_type: errors }
+        annotations:
+          summary: "Ledger Commit error rate is breaching the 0.5% SLO"
+          description: "The error rate for LedgerController/commit exceeded 0.5% for 5 minutes. The ledger has no external dependencies; investigate data integrity."
+        isPaused: false
