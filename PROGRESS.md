@@ -302,9 +302,17 @@ concrete slices needed to call it done.
   `traceId`, so a finding is navigable straight back to the trace that explains
   it, even though the reconciler runs out-of-band on its own trace
 
-### M7 — Metrics + logs ◐
+### M7 — Metrics + logs ☑
 
-- ◐ RED metrics and per-step SLOs in Grafana (RED instrumentation lives in `libs/interceptor`; Grafana dashboards/SLOs still to wire)
+- ☑ RED metrics and per-step SLOs in Grafana — RED instrumentation in `libs/interceptor`
+  (rate, error ratio, p50/p99 by operation) and the Grafana dashboard wired end to end: a
+  "Booking saga — RED" summary row, a "Per-service RED" row, a "Booking saga — per-step SLOs"
+  row with **14 stat panels** (one p99-latency SLO + one error-rate SLO per saga step: gateway,
+  coordinator, inventory hold, payments authorize, supplier confirm, payments capture, ledger
+  commit; each panel shows green / yellow / red against its step-specific threshold), and a trace
+  explorer panel. Prometheus metrics are wired through the OTel Collector's Prometheus exporter;
+  Tempo is wired as the trace datasource with exemplar trace-ID linking so a metric point jumps
+  straight to the originating trace.
 - ☑ Trace-correlated structured logging (`trace_id`/`span_id`) — `libs/logging`
 
 ### M8 — Harden + ship ☐

@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added — 2026-06-30
+- **Per-step SLOs in Grafana** (M7) — the "Booking saga — per-step SLOs" section is now wired
+  in the Grafana dashboard (`docker/grafana/dashboards/signalman.json`). Fourteen stat panels cover
+  every forward step of the booking saga — gateway, coordinator, inventory hold, payments authorize,
+  supplier confirm, payments capture, and ledger commit — with one **p99-latency** panel and one
+  **error-rate** panel per step. Each panel renders green / yellow / red against a step-specific
+  threshold (e.g. gateway p99 < 2 s, ledger commit p99 < 100 ms, supplier error budget < 10 %
+  given its deliberately-flaky external boundary). Panels read from the Prometheus exporter that
+  the OTel Collector already exposes; the Tempo datasource is linked for exemplar trace-ID
+  navigation so a metric point jumps straight to the originating booking trace. The existing RED
+  summary row and per-service row are unchanged; the trace explorer is preserved at the bottom.
+  Completes M7 (metrics + logs).
+
+### Added — 2026-06-30
 - **Fan-out span links** (M3) — `IdempotentConsumer` gains a `fanOut: boolean`
   option that, when `true`, opens a new root trace for each delivery and carries
   a span link back to the PRODUCER span instead of creating a child span. This
