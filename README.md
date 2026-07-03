@@ -33,22 +33,8 @@ back to the originating trace.
 
 ## Status
 
-**v1.0.0 — specification complete.** All eight milestones (M0 – M8) are done
+**v1.0.0 — specification complete.**
 and the full test suite is green (420+ assertions, 62 suites).
-
-Every spec requirement is in place:
-
-| # | Requirement | Status |
-|---|-------------|--------|
-| M0 | Scaffold — NestJS monorepo, CI, all eight services | ☑ done |
-| M1 | Happy-path saga — hold / auth / confirm / capture / commit / notify | ☑ done |
-| M2 | Transactional outbox — dual-write closed, crash-proven, relay wired | ☑ done |
-| M3 | Trace propagation — one booking = one trace across gRPC + events + external hop | ☑ done |
-| M4 | Compensations — failure paths unwind in reverse, all compensation spans visible | ☑ done |
-| M5 | Idempotency — inbox dedup, redelivery-safe consumers, effectively-once delivery | ☑ done |
-| M6 | Reconciler — source-of-truth comparison, divergence findings linked to traces | ☑ done |
-| M7 | Metrics + logs — RED + per-step SLOs in Grafana, trace-correlated structured logs | ☑ done |
-| M8 | Harden + ship — failure injection, trace anatomy, one-command docker-compose | ☑ done |
 
 ## Quick start
 
