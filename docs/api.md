@@ -299,7 +299,7 @@ Reverse a ledger entry — the saga compensation. Idempotent.
 
 Every producing service stages events transactionally (the **outbox pattern**) and the relay publishes them to the configured broker. All events carry W3C `traceparent` and `tracestate` headers so a consumer can continue the booking trace. The default broker is in-memory; set `BROKER=nats` with `NATS_URL` to use JetStream.
 
-Consumers that process a message more than once (due to broker redelivery) are safe because they are wrapped in the idempotent inbox (`@signalman/inbox`), which deduplicates by message id.
+Delivery is at-least-once and not ordered: the relay retries a failed row after later rows have been published. Each message carries `occurredAt`, the ISO-8601 time the event was staged in its service's outbox (over NATS, in the `Signalman-Occurred-At` header, which is stripped from the application headers on receipt). The notifier is wrapped in the idempotent inbox (`@signalman/inbox`), which deduplicates by message id. The reconciler instead orders each source's events by `occurredAt`, so a duplicate or late event cannot overwrite a newer state.
 
 ### Event subjects
 

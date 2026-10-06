@@ -387,8 +387,8 @@ shutdown.
 
 Two thin adapters wire the broker to the libraries either side of it.
 `BrokerPublisher` implements the outbox relay's `Publisher` over a broker
-(`toBrokerMessage` maps a record's `eventType` to the subject and preserves the
-trace-carrying headers), and `toConsumedMessage` turns a delivered
+(`toBrokerMessage` maps a record's `eventType` to the subject, carries its staging
+time as `occurredAt` and preserves the trace-carrying headers), and `toConsumedMessage` turns a delivered
 `BrokerMessage` into the inbox's `ConsumedMessage`. A service composes them in
 one line, so at-least-once delivery and inbox dedup become effectively-once
 processing on the booking trace:
@@ -748,10 +748,16 @@ booking's trace context (and stamps the finding's `traceId`). From a divergence
 you jump straight to the trace that explains how the booking got there — even
 though the reconciler runs out-of-band on its own trace. Keeping liveness in the
 gateway (it only emits bookings past a settle-grace window) lets the comparison
-stay a pure function of the snapshot. The in-memory `SourceOfTruthGateway` and
-findings store are reference implementations; the broker/Postgres-backed gateway
-that subscribes to `inventory.*`/`supplier.*`/`ledger.*` to build the projection
-lands with later milestones, behind the same DI tokens.
+stay a pure function of the snapshot.
+
+The running service builds that snapshot with `BrokerSourceOfTruthGateway`, which
+subscribes to `inventory.*`/`supplier.*`/`ledger.*`. Delivery is at-least-once and
+not ordered (the outbox relay retries a failed row after later rows have gone out),
+so the projection orders each source's events by the message's `occurredAt` (the
+outbox staging time) rather than by arrival. A late `supplier.confirmed` therefore
+cannot undo the `supplier.cancelled` that followed it and raise a false
+`supplier_confirmed_ledger_missing`. The findings store is still in memory; a
+Postgres-backed one would swap in behind the same DI token.
 
 ## Getting started
 

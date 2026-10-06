@@ -45,7 +45,12 @@ import {
 } from './broker';
 import { type BrokerMessage } from './message';
 import { DEFAULT_MAX_DELIVER } from './memory-broker';
-import { decodeNatsHeaders, encodeNatsHeaders, MESSAGE_ID_HEADER } from './nats-headers';
+import {
+  decodeNatsHeaders,
+  encodeNatsHeaders,
+  MESSAGE_ID_HEADER,
+  OCCURRED_AT_HEADER,
+} from './nats-headers';
 
 /** Default JetStream stream name the adapter provisions. */
 export const DEFAULT_STREAM_NAME = 'SIGNALMAN';
@@ -196,6 +201,9 @@ export class NatsBroker implements MessageBroker {
   publish(message: BrokerMessage): Promise<void> {
     const headers = encodeNatsHeaders(message.headers);
     headers.set(MESSAGE_ID_HEADER, message.id);
+    if (message.occurredAt !== undefined) {
+      headers.set(OCCURRED_AT_HEADER, message.occurredAt);
+    }
     return this.js
       .publish(message.subject, this.codec.encode(message.payload), {
         headers,
@@ -305,11 +313,13 @@ export class NatsBroker implements MessageBroker {
   /** Decode a delivered JetStream message back into a transport-agnostic {@link BrokerMessage}. */
   private toBrokerMessage(jsmsg: JsMsg): BrokerMessage {
     const id = jsmsg.headers?.get(MESSAGE_ID_HEADER);
+    const occurredAt = jsmsg.headers?.get(OCCURRED_AT_HEADER);
     return {
       id: id !== undefined && id !== '' ? id : String(jsmsg.seq),
       subject: jsmsg.subject,
       payload: this.codec.decode(jsmsg.data),
       headers: decodeNatsHeaders(jsmsg.headers),
+      ...(occurredAt !== undefined && occurredAt !== '' ? { occurredAt } : {}),
     };
   }
 

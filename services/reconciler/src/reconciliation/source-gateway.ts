@@ -34,11 +34,16 @@ export interface SourceOfTruthGateway {
   collectSettled(): Promise<BookingSnapshot[]>;
 }
 
+/** The three sources a projection tracks. */
+type Source = 'inventory' | 'supplier' | 'ledger';
+
 /** A booking's projection as it is built up from recorded source events. */
 interface Projection {
   inventory: InventoryState;
   supplier: SupplierState;
   ledger: LedgerState;
+  /** When each source's current state happened at that source, where known. */
+  occurredAt: Partial<Record<Source, Date>>;
   trace?: BrokerHeaders;
   observedAt?: Date;
 }
@@ -49,10 +54,16 @@ export interface SourceObservation {
   trace?: BrokerHeaders;
   /** When the observation was made. */
   observedAt?: Date;
+  /**
+   * When the reported state happened at its source (the event's staging time).
+   * An observation older than the state already recorded for that source is
+   * stale, a late retry or redelivery, and does not overwrite it.
+   */
+  occurredAt?: Date;
 }
 
 function emptyProjection(): Projection {
-  return { inventory: 'absent', supplier: 'absent', ledger: 'absent' };
+  return { inventory: 'absent', supplier: 'absent', ledger: 'absent', occurredAt: {} };
 }
 
 /**
@@ -61,28 +72,32 @@ function emptyProjection(): Projection {
  * fill from real events.
  *
  * Each `record*` call updates one booking's projection with what a source now
- * reports; the first observation carrying a trace context wins (the booking's
- * lineage is stable across its events), so a finding links back to where the
- * booking began. {@link collectSettled} returns every recorded booking; the
- * reference gateway treats whatever has been recorded as settled, leaving the
- * real settle-grace filtering to the production implementation.
+ * reports, unless the observation's `occurredAt` is older than the state already
+ * recorded for that source: delivery is at-least-once and unordered, so a late
+ * `supplier.confirmed` must not undo the `supplier.cancelled` staged after it.
+ * Observations without an `occurredAt` fall back to arrival order. The first
+ * observation carrying a trace context wins (the booking's lineage is stable
+ * across its events), so a finding links back to where the booking began.
+ * {@link collectSettled} returns every recorded booking; the reference gateway
+ * treats whatever has been recorded as settled, leaving the real settle-grace
+ * filtering to the production implementation.
  */
 export class InMemorySourceOfTruthGateway implements SourceOfTruthGateway {
   private readonly byBooking = new Map<string, Projection>();
 
   /** Record what inventory reports for a booking. */
   recordInventory(bookingId: string, state: InventoryState, meta: SourceObservation = {}): void {
-    this.update(bookingId, (p) => (p.inventory = state), meta);
+    this.update(bookingId, 'inventory', (p) => (p.inventory = state), meta);
   }
 
   /** Record what the supplier reports for a booking. */
   recordSupplier(bookingId: string, state: SupplierState, meta: SourceObservation = {}): void {
-    this.update(bookingId, (p) => (p.supplier = state), meta);
+    this.update(bookingId, 'supplier', (p) => (p.supplier = state), meta);
   }
 
   /** Record what the ledger reports for a booking. */
   recordLedger(bookingId: string, state: LedgerState, meta: SourceObservation = {}): void {
-    this.update(bookingId, (p) => (p.ledger = state), meta);
+    this.update(bookingId, 'ledger', (p) => (p.ledger = state), meta);
   }
 
   async collectSettled(): Promise<BookingSnapshot[]> {
@@ -101,13 +116,30 @@ export class InMemorySourceOfTruthGateway implements SourceOfTruthGateway {
     });
   }
 
-  private update(bookingId: string, mutate: (p: Projection) => void, meta: SourceObservation): void {
+  private update(
+    bookingId: string,
+    source: Source,
+    mutate: (p: Projection) => void,
+    meta: SourceObservation,
+  ): void {
     const projection = this.byBooking.get(bookingId) ?? emptyProjection();
-    mutate(projection);
+    const current = projection.occurredAt[source];
+    const stale =
+      meta.occurredAt !== undefined &&
+      current !== undefined &&
+      meta.occurredAt.getTime() < current.getTime();
+    if (!stale) {
+      mutate(projection);
+      if (meta.occurredAt !== undefined) {
+        projection.occurredAt[source] = meta.occurredAt;
+      }
+    }
     // First trace context wins — the booking's lineage is stable across its events.
     if (projection.trace === undefined && meta.trace !== undefined) {
       projection.trace = meta.trace;
     }
+    // A stale event still counts as activity: the booking is not quiet while
+    // its events are arriving, so it still resets the settle-grace clock.
     if (meta.observedAt !== undefined) {
       projection.observedAt = meta.observedAt;
     }
