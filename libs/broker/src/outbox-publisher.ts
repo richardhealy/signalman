@@ -15,8 +15,9 @@ import { type MessageBroker } from './broker';
 
 /**
  * Map a published outbox record onto a {@link BrokerMessage}: the record id
- * becomes the dedup id, its `eventType` becomes the broker subject, and the
- * payload and (trace-carrying) headers pass through unchanged.
+ * becomes the dedup id, its `eventType` becomes the broker subject, its staging
+ * time becomes `occurredAt`, and the payload and (trace-carrying) headers pass
+ * through unchanged.
  */
 export function toBrokerMessage(record: OutboxRecord): BrokerMessage {
   return {
@@ -24,6 +25,7 @@ export function toBrokerMessage(record: OutboxRecord): BrokerMessage {
     subject: record.eventType,
     payload: record.payload,
     headers: record.headers,
+    occurredAt: record.createdAt.toISOString(),
   };
 }
 

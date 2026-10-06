@@ -27,6 +27,7 @@ export {
   decodeNatsHeaders,
   encodeNatsHeaders,
   MESSAGE_ID_HEADER,
+  OCCURRED_AT_HEADER,
 } from './nats-headers';
 export {
   DEFAULT_ACK_WAIT_MS,

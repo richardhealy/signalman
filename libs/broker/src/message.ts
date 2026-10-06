@@ -33,6 +33,14 @@ export interface BrokerMessage {
    * headers), so the consume span continues the booking trace.
    */
   headers: BrokerHeaders;
+  /**
+   * When the event happened at its source, as an ISO-8601 timestamp: the outbox
+   * record's staging time. Delivery is at-least-once and unordered (a row that
+   * failed to publish is retried after later rows have gone out), so a consumer
+   * that needs a service's latest state orders by this rather than by arrival.
+   * Absent on messages published without an outbox record behind them.
+   */
+  occurredAt?: string;
 }
 
 /**

@@ -116,6 +116,36 @@ describeMaybe('NatsBroker (integration)', () => {
     expect(b[0].id).toBe('evt_fanout_1');
   });
 
+  it('carries occurredAt across JetStream as the message field, not a header', async () => {
+    const { broker, subjectPrefix } = await connectTestBroker();
+    const subject = `${subjectPrefix}.occurred`;
+    const received: BrokerMessage[] = [];
+    broker.subscribe(subject, async (message) => {
+      received.push(message);
+    });
+    await broker.whenReady();
+
+    await broker.publish({
+      id: 'evt_occurred_1',
+      subject,
+      payload: { bookingId: 'bk_1' },
+      headers: { traceparent: traceparent() },
+      occurredAt: '2026-10-06T09:00:00.000Z',
+    });
+    await broker.publish({
+      id: 'evt_occurred_2',
+      subject,
+      payload: { bookingId: 'bk_2' },
+      headers: {},
+    });
+
+    await waitFor(() => received.length === 2);
+    const byId = new Map(received.map((m) => [m.id, m]));
+    expect(byId.get('evt_occurred_1')?.occurredAt).toBe('2026-10-06T09:00:00.000Z');
+    expect(byId.get('evt_occurred_1')?.headers).toEqual({ traceparent: traceparent() });
+    expect(byId.get('evt_occurred_2')?.occurredAt).toBeUndefined();
+  });
+
   it('load-balances a subject across queue-group members (each message once)', async () => {
     const { broker, subjectPrefix } = await connectTestBroker();
     const subject = `${subjectPrefix}.queue`;

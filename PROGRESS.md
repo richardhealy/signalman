@@ -314,6 +314,17 @@ concrete slices needed to call it done.
   bookings are never reconciled before their saga completes. The in-memory
   findings store remains for now; the Postgres-backed store lands with the
   datastore milestone behind the same `FINDING_REPOSITORY` token
+- ☑ Projection survives out-of-order and duplicate delivery (fixed 2026-10-06).
+  The relay retries a failed row after later rows have gone out, so the
+  reconciler could receive `supplier.confirmed` after the `supplier.cancelled`
+  that followed it and report a false critical `supplier_confirmed_ledger_missing`
+  (or a false `orphaned_hold` from a late `inventory.held`). Broker messages now
+  carry `occurredAt` (the outbox staging time, over NATS in the
+  `Signalman-Occurred-At` header) and the projection ignores an event older than
+  the state it holds for that source. Covered by `delivery-order.spec.ts`, which
+  drives the real relay with a transient publish failure. Known limit: ordering
+  relies on the producing service's clock, so skew between two instances of one
+  service could still misorder events staged within that skew
 - ☑ Divergence findings linked to the originating booking trace — each new
   `DivergenceFinding` opens a `reconcile.divergence` span carrying a span link to
   the booking's trace context (lifted from the snapshot) and stamps the finding's

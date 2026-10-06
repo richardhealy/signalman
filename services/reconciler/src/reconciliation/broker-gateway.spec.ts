@@ -132,6 +132,33 @@ describe('BrokerSourceOfTruthGateway', () => {
     });
   });
 
+  describe('delivery order', () => {
+    const stamped = (subject: string, id: string, occurredAt: string): BrokerMessage => ({
+      ...makeEvent(subject, 'bk_1'),
+      id,
+      occurredAt,
+    });
+
+    it('keeps the cancellation when supplier.confirmed is redelivered after it', async () => {
+      await deliver(gateway, stamped('supplier.confirmed', 'evt_1', '2026-06-29T11:59:00.000Z'));
+      await deliver(gateway, stamped('supplier.cancelled', 'evt_2', '2026-06-29T11:59:01.000Z'));
+      await deliver(gateway, stamped('supplier.confirmed', 'evt_1', '2026-06-29T11:59:00.000Z'));
+      advance(10_000);
+
+      const [snap] = await gateway.collectSettled();
+      expect(snap).toMatchObject({ bookingId: 'bk_1', supplier: 'cancelled' });
+    });
+
+    it('falls back to arrival order for an unparseable occurredAt', async () => {
+      await deliver(gateway, stamped('inventory.released', 'evt_1', '2026-06-29T11:59:01.000Z'));
+      await deliver(gateway, stamped('inventory.held', 'evt_2', 'not-a-date'));
+      advance(10_000);
+
+      const [snap] = await gateway.collectSettled();
+      expect(snap).toMatchObject({ bookingId: 'bk_1', inventory: 'held' });
+    });
+  });
+
   describe('settle-grace window', () => {
     it('excludes bookings observed within the grace window', async () => {
       await deliver(gateway, makeEvent('inventory.held', 'bk_1'));

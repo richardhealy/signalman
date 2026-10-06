@@ -388,7 +388,7 @@ Span and metric attributes map to the OTel RPC semantic conventions (`rpc.system
 - `InMemoryBroker` — reference implementation: NATS wildcard subject matching (`*` one token, `>` tail), fan-out per subscriber, queue-group load-balancing, at-least-once delivery (NACK → redelivery up to `maxDeliver` → dead-letter).
 
 *Adapters:*
-- `BrokerPublisher` — implements the outbox relay's `Publisher` over a `MessageBroker` (`toBrokerMessage` maps `eventType` to subject, preserves trace headers).
+- `BrokerPublisher` — implements the outbox relay's `Publisher` over a `MessageBroker` (`toBrokerMessage` maps `eventType` to subject, stamps the staging time as `occurredAt`, preserves trace headers).
 - `toConsumedMessage(brokerMessage)` — turns a delivered `BrokerMessage` into the inbox's `ConsumedMessage` (so the broker → inbox handoff is a one-liner).
 
 *NATS JetStream transport (`NatsBroker`):*
@@ -529,6 +529,7 @@ All eight services are built with NestJS and TypeScript. Each service's `main.ts
 
 **Responsibilities:**
 - Subscribe to `inventory.*`, `supplier.*`, `ledger.*` via `BrokerSubscriptionHost`; project each event into a per-booking cross-source snapshot (`BrokerSourceOfTruthGateway`).
+- Order each source's events by the message's `occurredAt` (its outbox staging time), not by arrival, so a retried or redelivered older event cannot overwrite a newer state.
 - Apply a settle-grace window (`RECONCILER_SETTLE_GRACE_MS`, default 5 s) so in-flight bookings are never flagged as divergent before their saga completes.
 - Run `ReconcilerService.runOnce()` on an interval (`RECONCILER_INTERVAL_MS`, default 30 s), never letting a failed pass kill the loop.
 - For each settled booking, run `detectDivergences(snapshot)` and persist new findings (idempotent per `(bookingId, kind)`).
@@ -622,6 +623,12 @@ When the same event is consumed by multiple independent consumers (the notifier 
 ### Settle-grace window in the reconciler
 
 The reconciler compares snapshots built from events. A saga that is still in flight will look divergent (inventory held, no ledger commit yet) until the saga completes. The settle-grace window (`RECONCILER_SETTLE_GRACE_MS`) filters out bookings whose last event is too recent, so only bookings whose event stream has gone quiet are eligible for comparison. This prevents false-positive divergence findings on healthy, in-progress bookings.
+
+### Ordering source events by when they happened
+
+The outbox relay is at-least-once and does not hold back later rows while an earlier one waits out its retry back-off. So the reconciler can receive `supplier.cancelled` and then, a few seconds later, the `supplier.confirmed` that was staged before it. If the projection took whichever event arrived last, that booking would read as confirmed with no ledger commit and the reconciler would raise a critical `supplier_confirmed_ledger_missing` for a saga that unwound correctly.
+
+`toBrokerMessage` therefore stamps every message with `occurredAt`, the outbox record's staging time (carried over NATS in the adapter-internal `Signalman-Occurred-At` header), and the reconciler's projection ignores an event older than the state it already holds for that source. Each source is ordered on its own, so a late inventory event is judged against inventory's last event only. A booking id that is retried after a failure (held, released, held again) still ends up held, which a simpler "compensated states are final" rule would get wrong. The cost is a dependence on each producing service's clock: two instances of the same service with skewed clocks could still misorder events for one booking that were staged within the skew of each other. Messages without an `occurredAt` fall back to arrival order.
 
 ### External calls outside the transaction
 

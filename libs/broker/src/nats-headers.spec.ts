@@ -1,5 +1,10 @@
 import { headers as createNatsHeaders } from 'nats';
-import { decodeNatsHeaders, encodeNatsHeaders, MESSAGE_ID_HEADER } from './nats-headers';
+import {
+  decodeNatsHeaders,
+  encodeNatsHeaders,
+  MESSAGE_ID_HEADER,
+  OCCURRED_AT_HEADER,
+} from './nats-headers';
 
 describe('encodeNatsHeaders', () => {
   it('writes a string header through unchanged', () => {
@@ -57,6 +62,13 @@ describe('decodeNatsHeaders', () => {
     const decoded = decodeNatsHeaders(hdrs);
     expect(decoded[MESSAGE_ID_HEADER]).toBeUndefined();
     expect(decoded.traceparent).toBe('00-abc-def-01');
+  });
+
+  it('strips the adapter occurred-at header from the application view', () => {
+    const hdrs = createNatsHeaders();
+    hdrs.set(OCCURRED_AT_HEADER, '2026-10-06T09:00:00.000Z');
+    hdrs.set('traceparent', '00-abc-def-01');
+    expect(decodeNatsHeaders(hdrs)).toEqual({ traceparent: '00-abc-def-01' });
   });
 
   it('round-trips application headers through encode then decode', () => {
