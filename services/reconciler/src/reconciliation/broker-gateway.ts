@@ -13,7 +13,9 @@
  * - `ledger.*`     — what the ledger reports about committed and reversed entries.
  *
  * Each event updates the per-booking projection held by an inner
- * {@link InMemorySourceOfTruthGateway}. {@link collectSettled} then applies a
+ * {@link InMemorySourceOfTruthGateway}, ordered by the event's `occurredAt` (its
+ * outbox staging time) rather than by arrival, because the relay retries a failed
+ * row after later rows have already gone out. {@link collectSettled} then applies a
  * settle-grace window — only returning bookings whose last source event was
  * observed at least {@link settleGraceMs} ago — so an in-flight booking whose
  * events are still arriving is never reconciled before the saga completes, which
@@ -34,6 +36,19 @@ import {
   type SourceObservation,
   type SourceOfTruthGateway,
 } from './source-gateway';
+
+/**
+ * The event's source time as an observation field, or nothing when the message
+ * carries no `occurredAt` (or an unparseable one), so the projection falls back
+ * to arrival order for it.
+ */
+function occurredAtOf(message: BrokerMessage): Pick<SourceObservation, 'occurredAt'> {
+  if (message.occurredAt === undefined) {
+    return {};
+  }
+  const occurredAt = new Date(message.occurredAt);
+  return Number.isNaN(occurredAt.getTime()) ? {} : { occurredAt };
+}
 
 /** Default settle-grace: wait 5 seconds after the last observed source event. */
 export const DEFAULT_SETTLE_GRACE_MS = 5_000;
@@ -88,6 +103,7 @@ export class BrokerSourceOfTruthGateway implements SourceOfTruthGateway {
       const observation: SourceObservation = {
         trace: message.headers,
         observedAt: this.clock(),
+        ...occurredAtOf(message),
       };
 
       switch (message.subject) {

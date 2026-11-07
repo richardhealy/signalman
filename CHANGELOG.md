@@ -24,6 +24,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-06)
+- **Reconciler no longer reports false divergences when events arrive out of
+  order.** The outbox relay retries a failed publish after later rows have gone
+  out, and a relay crash can redeliver an event, so the reconciler could see
+  `supplier.confirmed` after the `supplier.cancelled` that followed it. Its
+  projection took the last event to arrive, so a booking whose saga had unwound
+  correctly was reported as a critical `supplier_confirmed_ledger_missing` (and a
+  late `inventory.held` as an `orphaned_hold`). `BrokerMessage` gains an optional
+  `occurredAt`, set by `toBrokerMessage` from the outbox record's staging time and
+  carried over JetStream in the adapter-internal `Signalman-Occurred-At` header.
+  The reconciler's projection now ignores an event older than the state it already
+  holds for that source, and falls back to arrival order when `occurredAt` is
+  missing. New tests: `delivery-order.spec.ts` (real relay, in-memory broker and
+  reconciler, with a transient publish failure), projection ordering rules in
+  `source-gateway.spec.ts` and `broker-gateway.spec.ts`, the header codec, and a
+  gated JetStream round trip in `nats-broker.integration.spec.ts`.
+
 ### Documentation — 2026-06-30
 - **App screenshots** (`docs/screenshots/`) — two Playwright-generated PNG screenshots
   added to the repository and linked in `README.md` above the Documentation table:

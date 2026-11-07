@@ -21,6 +21,13 @@ import { type BrokerHeaders } from '@signalman/propagation';
 export const MESSAGE_ID_HEADER = 'Signalman-Msg-Id';
 
 /**
+ * The header the adapter uses to carry a {@link BrokerMessage.occurredAt} across
+ * NATS. Adapter-internal like {@link MESSAGE_ID_HEADER}: it comes back as the
+ * message field, not as an application header.
+ */
+export const OCCURRED_AT_HEADER = 'Signalman-Occurred-At';
+
+/**
  * Encode transport-agnostic {@link BrokerHeaders} into NATS {@link MsgHdrs}.
  *
  * `undefined` values are dropped, a string array becomes a multi-valued header
@@ -73,5 +80,9 @@ export function decodeNatsHeaders(source: MsgHdrs | undefined): BrokerHeaders {
 
 /** Whether a header is transport/adapter machinery rather than an application header. */
 function isInternalHeader(key: string): boolean {
-  return key === MESSAGE_ID_HEADER || key.toLowerCase().startsWith('nats-');
+  return (
+    key === MESSAGE_ID_HEADER ||
+    key === OCCURRED_AT_HEADER ||
+    key.toLowerCase().startsWith('nats-')
+  );
 }
