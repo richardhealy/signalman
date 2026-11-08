@@ -30,7 +30,7 @@ docker-compose up
 # In another terminal, trigger one booking.
 curl -s -X POST http://localhost:3000/bookings \
   -H 'Content-Type: application/json' \
-  -d '{"sku":"ECO","qty":1,"amount":9900,"currency":"USD"}' | jq .
+  -d '{"sku":"seat-economy","qty":1,"amount":9900,"currency":"USD"}' | jq .
 ```
 
 The response includes a `traceId`:
@@ -74,7 +74,7 @@ SUPPLIER_FAILURE_RATE=1 docker-compose up
 # Trigger a booking.
 curl -s -X POST http://localhost:3000/bookings \
   -H 'Content-Type: application/json' \
-  -d '{"sku":"ECO","qty":1,"amount":9900,"currency":"USD"}' | jq .
+  -d '{"sku":"seat-economy","qty":1,"amount":9900,"currency":"USD"}' | jq .
 ```
 
 The response will have `"status":"failed"` and `"compensated":true`. In Tempo, the
@@ -95,6 +95,12 @@ the full walkthrough.
 
 ### 3 · Induce and observe a reconciler divergence
 
+> **Not runnable yet.** No service reads `LEDGER_FAILURE_RATE`, and the ledger has
+> no failure injection, so the command below starts a normal stack and the
+> booking runs the saga as usual. The reconciler's detection and its span link
+> are covered by the unit tests (`services/reconciler/src/reconciliation/*.spec.ts`).
+> The rest of this section describes what a forced divergence would look like.
+
 Inject a divergence by having the supplier confirm a booking while the ledger
 commit fails. Run the reconciler and watch it link the divergence back to the
 booking trace.
@@ -105,7 +111,7 @@ LEDGER_FAILURE_RATE=1 docker-compose up
 
 curl -s -X POST http://localhost:3000/bookings \
   -H 'Content-Type: application/json' \
-  -d '{"sku":"ECO","qty":1,"amount":9900,"currency":"USD"}' | jq .
+  -d '{"sku":"seat-economy","qty":1,"amount":9900,"currency":"USD"}' | jq .
 # -> status: failed, failedStep: ledger.commit
 ```
 

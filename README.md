@@ -33,8 +33,10 @@ back to the originating trace.
 
 ## Status
 
-**v1.0.0 — specification complete.**
-and the full test suite is green (420+ assertions, 62 suites).
+**v1.0.0, specification complete.** Lint, typecheck, build and the test suite
+are green: 66 suites and 450 tests, of which 3 suites (17 tests) need a running
+NATS or Postgres and are skipped by default. See [Known limits](#known-limits)
+for what the system does not do yet.
 
 ## Quick start
 
@@ -44,35 +46,49 @@ Requires Docker and Docker Compose.
 docker-compose up
 ```
 
-This builds all services from the monorepo and starts the full stack: NATS
-JetStream, OTel Collector, Grafana Tempo, Grafana, and all eight application
+This builds all services from the monorepo and starts the full stack: Postgres,
+NATS JetStream, OTel Collector, Grafana Tempo, Grafana, and all eight application
 services. The first build takes a few minutes; subsequent starts are fast.
 
-Once all services are up, trigger a booking:
+Once all services are up, trigger a booking. The inventory service is seeded with
+three SKUs: `seat-economy` (100 in stock), `seat-business` (20) and
+`room-standard` (50). `amount` is in minor units (cents).
 
 ```bash
 curl -s -X POST http://localhost:3000/bookings \
   -H "Content-Type: application/json" \
-  -d '{"skuId":"SKU-1","quantity":1,"amount":100,"customerId":"c1"}' | jq .
+  -d '{"sku":"seat-economy","qty":1,"amount":4200,"currency":"USD"}' | jq .
 ```
 
-The response carries a `traceId`. Open **Grafana** at
+A successful booking comes back as `201` with `"status": "booked"`, the id each
+leg recorded (`holdId`, `authorizationId`, `confirmationId`, `captureId`,
+`entryId`) and a `traceId`. The simulated PSP and partner fail a share of calls
+by default, so some bookings come back `"status": "failed"` with a `failedStep`;
+see [Run the coordinator service](#run-the-coordinator-service) for the
+variables that switch that off.
+
+To see the trace, open **Grafana** at
 [http://localhost:3001](http://localhost:3001), go to **Explore → Tempo**, and
 paste the trace ID to browse the connected booking trace across all six services.
 The **Signalman — Booking Platform** dashboard (under Dashboards → Signalman)
 shows RED metrics per service and a live trace search panel.
 
-To force a compensation path (supplier failure → saga unwind), set a 100 %
-supplier failure rate:
+To force a compensation path (supplier failure, then the saga unwinds), restart
+the stack with a 100 % supplier failure rate. `docker-compose.yml` passes the six
+simulated-boundary variables (`PSP_LATENCY_MS`, `PSP_DECLINE_RATE`,
+`PSP_FAILURE_RATE`, `SUPPLIER_LATENCY_MS`, `SUPPLIER_REJECT_RATE`,
+`SUPPLIER_FAILURE_RATE`) through from your shell, with the services' own defaults
+when they are unset:
 
 ```bash
-docker-compose up \
-  -e SUPPLIER_FAILURE_RATE=1
+SUPPLIER_FAILURE_RATE=1 docker-compose up
 ```
 
-Then trigger a booking — the saga will reach the supplier step, fail, and unwind
-`payments.void → inventory.release`. Both the failure and the compensations appear
-as spans under the coordinator's `Book` SERVER span in Tempo.
+Then trigger a booking. The saga reaches the supplier step, fails, and unwinds
+`payments.void → inventory.release`; the response is still `201`, with
+`"status": "failed"`, `"failedStep": "supplier.confirm"` and
+`"compensated": true`. Both the failure and the compensations appear as spans
+under the coordinator's `Book` SERVER span in Tempo.
 
 ## Trace anatomy
 
@@ -158,9 +174,10 @@ findings back to the source.
 
 ## Stack
 
-Node / TypeScript · NestJS (microservices) · gRPC · an event broker (NATS
-JetStream or Kafka) · Postgres per service · transactional outbox ·
-OpenTelemetry JS exporting OTLP to Tempo + Grafana.
+Node / TypeScript · NestJS (microservices) · gRPC · NATS JetStream as the event
+broker (behind a transport-agnostic interface; there is no Kafka adapter) ·
+Postgres, one schema per service · transactional outbox · OpenTelemetry JS
+exporting OTLP to Tempo + Grafana.
 
 ## Layout
 
@@ -312,9 +329,11 @@ const relay = new OutboxRelay({ store: outboxStore, publisher, messagingSystem: 
 relay.start(250); // poll every 250ms; relay.stop() on shutdown
 ```
 
-`InMemoryOutboxStore` is the reference store implementation — it models leasing,
-back-off, and dead-lettering exactly as a SQL store would, and serves as a fake
-in tests until the Postgres-backed store lands with the services.
+`InMemoryOutboxStore` is the reference store implementation. It models leasing,
+back-off, and dead-lettering as a SQL store would, and backs the unit tests and
+single-process runs. `PostgresOutboxStore` (`libs/outbox/src/pg-store.ts`) is the
+SQL version the services use when `POSTGRES_URL` is set; its integration suite is
+gated and skipped unless a Postgres is available.
 
 The guarantee is **proven under crash** (`durability.spec.ts`): a staging
 transaction that rolls back leaves no outbox row, so no phantom event ever
@@ -364,8 +383,10 @@ record in one transaction — because that is the only place the guarantee can b
 made. `InMemoryInboxStore` is the reference store: it claims synchronously (so
 interleaved redeliveries can't both run) and rolls the marker back when the
 handler throws, modelling an `INSERT … ON CONFLICT DO NOTHING` plus the handler's
-writes under one transaction, until the Postgres-backed store lands with the
-services. Pair it with the outbox relay for effectively-once processing.
+writes under one transaction. `PostgresInboxStore` (`libs/inbox/src/pg-store.ts`)
+is the SQL version, though no service wires it in yet: the notifier, the one
+inbox consumer, still uses the in-memory store. Pair either with the outbox relay
+for effectively-once processing.
 
 ### `@signalman/broker`
 
@@ -373,8 +394,9 @@ The broker is the transport between the outbox and the inbox — the async-event
 hop of the one-trace story. `MessageBroker` is the transport-agnostic boundary
 (`publish` a message on its subject, `subscribe` a handler to subject patterns);
 the rest of the system depends on it rather than on NATS or Kafka, so the
-in-memory reference backs the tests and a single-process demo, and a JetStream
-adapter slots in later behind the same interface.
+in-memory reference backs the tests and a single-process demo, and the JetStream
+adapter (`NatsBroker`, below) implements the same interface for the
+docker-compose stack.
 
 `InMemoryBroker` is that reference. It models the semantics a real broker gives
 the system: **subject matching** with NATS wildcards (`subjectMatches` — `*` for
@@ -547,8 +569,9 @@ gRPC handler is wrapped by `@signalman/interceptor`'s SERVER span — the invent
 hop of the booking trace — and the staged events continue from it, so the whole
 leg hangs off one connected trace. The module registers an `OutboxRelayHost`
 (§`@signalman/broker`) that drains those staged events onto the configured broker.
-The in-memory hold and outbox stores are reference implementations; the
-Postgres-backed stores land with the datastore milestone.
+With `POSTGRES_URL` set the module uses `PostgresHoldRepository` and
+`PostgresOutboxStore` in the `inventory` schema (tables created on boot, stock
+seeded); without it the in-memory reference stores stand in.
 
 ### `services/payments`
 
@@ -580,9 +603,9 @@ the payment write and its event are wrapped in `runInTransaction` so they
 it is the one side effect that cannot roll back — so a rollback never leaves a
 charged PSP without a recorded payment; a retried authorize replays it
 idempotently. As with inventory, the module registers an `OutboxRelayHost` that
-drains its staged events onto the configured broker; the in-memory payment and
-outbox stores are reference implementations, and the Postgres-backed stores land
-with the datastore milestone.
+drains its staged events onto the configured broker. With `POSTGRES_URL` set it
+uses Postgres payment and outbox stores in the `payments` schema; without it the
+in-memory reference stores stand in.
 
 ### `services/supplier`
 
@@ -613,8 +636,9 @@ write and its event are wrapped in `runInTransaction` so they **commit together
 or not at all**. The partner call runs **before** the transaction — the side
 effect that cannot roll back — so a retried confirm replays it idempotently. The
 module registers an `OutboxRelayHost` that drains its staged events onto the
-configured broker; the in-memory confirmation and outbox stores are reference
-implementations, and the Postgres-backed stores land with the datastore milestone.
+configured broker. With `POSTGRES_URL` set it uses Postgres confirmation and
+outbox stores in the `supplier` schema; without it the in-memory reference stores
+stand in.
 
 ### `services/ledger`
 
@@ -645,9 +669,9 @@ all** — closing the dual-write window in the reference, not just "in Postgres
 later." Every producing leg (inventory, payments, supplier, ledger) now stages
 this way, each with a service test that pins the rollback: when the outbox `add`
 throws, the state change rolls back with it. The module registers an
-`OutboxRelayHost` that drains its staged events onto the configured broker; the
-in-memory ledger and outbox stores are reference implementations, and the
-Postgres-backed stores land with the datastore milestone.
+`OutboxRelayHost` that drains its staged events onto the configured broker. With
+`POSTGRES_URL` set it uses Postgres entry and outbox stores in the `ledger`
+schema; without it the in-memory reference stores stand in.
 
 ### `services/coordinator`
 
@@ -681,7 +705,9 @@ production those ports are gRPC client adapters dialling the real services
 the booking's `traceparent` into the request metadata (`callWithTrace` /
 `injectTraceMetadata`), so each leg's SERVER span continues this one trace —
 the cross-service folding the trace-propagation milestone (M3) calls for, on the
-synchronous gRPC hops. The async-event hop joins it once the broker lands.
+synchronous gRPC hops. The async-event hop continues it too: each staged event
+carries the `traceparent` through the outbox relay and the broker to its
+consumers.
 
 ### `services/notifier`
 
@@ -714,9 +740,9 @@ and an **outage** (a thrown error) propagates so the consumer NACKs and the brok
 redelivers — nothing is recorded, so the redelivery genuinely retries. Being the
 terminal consumer, the notifier keeps a notification source-of-truth record (a
 fourth thing the reconciler can check — *was the customer actually told?*) but
-stages no outbox event. The in-memory notification and inbox stores are reference
-implementations; the Postgres-backed stores land with the datastore milestone,
-behind the same DI tokens.
+stages no outbox event. Its notification and inbox stores are in memory in every
+mode, including the docker-compose stack, so its records go when the process
+restarts; Postgres versions would swap in behind the same DI tokens.
 
 ### `services/reconciler`
 
@@ -756,8 +782,10 @@ not ordered (the outbox relay retries a failed row after later rows have gone ou
 so the projection orders each source's events by the message's `occurredAt` (the
 outbox staging time) rather than by arrival. A late `supplier.confirmed` therefore
 cannot undo the `supplier.cancelled` that followed it and raise a false
-`supplier_confirmed_ledger_missing`. The findings store is still in memory; a
-Postgres-backed one would swap in behind the same DI token.
+`supplier_confirmed_ledger_missing`. The findings store is in memory in every
+mode, so findings go when the process restarts, and there is no API to list
+them: they show up as `reconcile.divergence` spans in Tempo. A Postgres-backed
+store would swap in behind the same `FINDING_REPOSITORY` token.
 
 ## Getting started
 
@@ -910,10 +938,14 @@ RECONCILER_INTERVAL_MS=5000 npm run start:reconciler   # reconcile every 5s
 
 The reconciler is a periodic background job with no synchronous surface, so it
 boots as an application context and runs a reconciliation pass on its interval (the
-interval timer also keeps it resident). Its source gateway is the in-memory
-reference until the broker/datastore-backed gateway lands, so passes find no
-bookings for now — but the cadence, the comparison engine, and the trace-linked
-findings are all live and exercised by the unit tests.
+interval timer also keeps it resident). Its source gateway is
+`BrokerSourceOfTruthGateway`, which builds each booking's snapshot from the
+`inventory.*`, `supplier.*` and `ledger.*` events on the configured broker and
+waits `RECONCILER_SETTLE_GRACE_MS` (default 5 s) before reconciling a booking.
+Under the in-memory default broker the reconciler process owns its own broker and
+never sees the other services' events, so its passes find no bookings; start every
+service with `BROKER=nats` (as the docker-compose stack does) for it to reconcile
+real bookings.
 
 ## Development
 
@@ -930,3 +962,31 @@ See **[docs/index.md](docs/index.md)** for the full documentation index, how-to
 guides, and instructions for running the gated integration tests.
 See **[docs/architecture.md](docs/architecture.md)** for the component map and
 design decisions, and **[docs/api.md](docs/api.md)** for the API reference.
+
+## Known limits
+
+- **Clock-ordered reconciliation.** The reconciler orders each source's events by
+  their outbox staging time (`occurredAt`), which comes from the producing
+  service's clock. Two instances of one service with skewed clocks could still
+  misorder one booking's events staged within that skew.
+- **Some stores are in memory in every mode.** The notifier's notification and
+  inbox stores and the reconciler's findings store have no Postgres version wired
+  in, so their records go when the process restarts. The gateway, inventory,
+  payments, supplier and ledger switch to Postgres when `POSTGRES_URL` is set.
+- **Findings have no API.** Divergence findings are visible only as
+  `reconcile.divergence` spans, each with a span link to its booking trace.
+  Nothing serves, stores durably or alerts on them.
+- **Separate processes need NATS.** With the default in-memory broker each process
+  has its own broker, so services started one by one with `npm run start:*`
+  exchange no events: the notifier sends nothing and the reconciler finds nothing.
+  Set `BROKER=nats` on every service, or use docker-compose.
+- **One broker transport.** Only NATS JetStream is implemented. The broker
+  interface leaves room for a Kafka adapter, but none exists.
+- **No switch for inducing a divergence.** The ledger has no failure injection,
+  so the docker-compose stack cannot be made to produce a
+  `supplier_confirmed_ledger_missing` finding on demand. The divergence
+  walkthrough in [docs/index.md](docs/index.md) sets `LEDGER_FAILURE_RATE`, which
+  no service reads; the reconciler's detection is covered by the unit tests
+  instead.
+- **Simulated external partners.** The PSP and the supplier partner are
+  simulators with tunable latency and failure rates, not real integrations.

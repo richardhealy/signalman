@@ -134,7 +134,7 @@ Libraries are imported via path aliases (`@signalman/otel`, `@signalman/broker`,
 ```
  HTTP client
      │
-     │ POST /bookings {skuId, quantity, amount, customerId}
+     │ POST /bookings {sku, qty, amount, currency}
      ▼
  gateway
      │ opens ROOT span (POST /bookings [SERVER])
