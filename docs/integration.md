@@ -87,7 +87,7 @@ before sending your first request.
 ```bash
 curl -s -X POST http://localhost:3000/bookings \
   -H "Content-Type: application/json" \
-  -d '{"sku":"ECO","qty":1,"amount":9900,"currency":"USD"}' | jq .
+  -d '{"sku":"seat-economy","qty":1,"amount":9900,"currency":"USD"}' | jq .
 ```
 
 A successful booking returns `201` with `"status": "booked"`:
@@ -96,7 +96,7 @@ A successful booking returns `201` with `"status": "booked"`:
 {
   "bookingId": "01926a7e-f1d2-7000-b6e2-c8b7a9df1234",
   "status": "booked",
-  "request": { "sku": "ECO", "qty": 1, "amount": 9900, "currency": "USD" },
+  "request": { "sku": "seat-economy", "qty": 1, "amount": 9900, "currency": "USD" },
   "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
   "recordedAt": "2026-06-30T12:00:00.000Z",
   "holdId": "hold-abc",
@@ -154,7 +154,7 @@ fail at a controlled rate, which causes the saga to unwind the completed steps.
 docker-compose:
 
 ```bash
-docker-compose up -e SUPPLIER_FAILURE_RATE=1
+SUPPLIER_FAILURE_RATE=1 docker-compose up
 ```
 
 Then trigger a booking:
@@ -162,7 +162,7 @@ Then trigger a booking:
 ```bash
 curl -s -X POST http://localhost:3000/bookings \
   -H "Content-Type: application/json" \
-  -d '{"sku":"ECO","qty":1,"amount":9900,"currency":"USD"}' | jq .
+  -d '{"sku":"seat-economy","qty":1,"amount":9900,"currency":"USD"}' | jq .
 ```
 
 The response will be `201` with `"status": "failed"`:
@@ -171,7 +171,7 @@ The response will be `201` with `"status": "failed"`:
 {
   "bookingId": "01926a7e-f1d2-7000-b6e2-c8b7a9df5678",
   "status": "failed",
-  "request": { "sku": "ECO", "qty": 1, "amount": 9900, "currency": "USD" },
+  "request": { "sku": "seat-economy", "qty": 1, "amount": 9900, "currency": "USD" },
   "traceId": "3a99f37ddc47b843b26b82c28a5e1987",
   "recordedAt": "2026-06-30T12:00:05.000Z",
   "failedStep": "supplier.confirm",
@@ -263,7 +263,7 @@ Content-Type: application/json
 
 ```json
 {
-  "sku": "ECO",
+  "sku": "seat-economy",
   "qty": 1,
   "amount": 9900,
   "currency": "USD",
@@ -281,7 +281,7 @@ overwrites the previous recorded outcome, so a retried success is safe.
 {
   "bookingId": "my-idempotency-key-uuid",
   "status": "booked",
-  "request": { "sku": "ECO", "qty": 1, "amount": 9900, "currency": "USD" },
+  "request": { "sku": "seat-economy", "qty": 1, "amount": 9900, "currency": "USD" },
   "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
   "recordedAt": "2026-06-30T12:00:00.000Z",
   "holdId": "hold-abc",
@@ -298,7 +298,7 @@ overwrites the previous recorded outcome, so a retried success is safe.
 {
   "bookingId": "my-idempotency-key-uuid",
   "status": "failed",
-  "request": { "sku": "ECO", "qty": 1, "amount": 9900, "currency": "USD" },
+  "request": { "sku": "seat-economy", "qty": 1, "amount": 9900, "currency": "USD" },
   "traceId": "3a99f37ddc47b843b26b82c28a5e1987",
   "recordedAt": "2026-06-30T12:00:05.000Z",
   "failedStep": "supplier.confirm",
@@ -396,7 +396,7 @@ go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest  # other
 ```bash
 grpcurl -plaintext \
   -import-path proto -proto coordinator.proto \
-  -d '{"bookingId":"bk-1","sku":"ECO","qty":1,"amount":9900,"currency":"USD"}' \
+  -d '{"bookingId":"bk-1","sku":"seat-economy","qty":1,"amount":9900,"currency":"USD"}' \
   localhost:50050 signalman.coordinator.v1.Coordinator/Book
 ```
 
@@ -467,7 +467,7 @@ grpcurl -plaintext \
 ```bash
 grpcurl -plaintext \
   -import-path proto -proto supplier.proto \
-  -d '{"bookingId":"bk-2","sku":"ECO","qty":1}' \
+  -d '{"bookingId":"bk-2","sku":"seat-economy","qty":1}' \
   localhost:50053 signalman.supplier.v1.Supplier/Confirm
 
 grpcurl -plaintext \
@@ -643,7 +643,7 @@ const logger = createLogger({ service: 'my-service', context: 'BookingFlow' });
 logger.log('booking started', { bookingId: 'bk-1', sku: 'ECO' });
 // {"timestamp":"…","level":"log","service":"my-service","context":"BookingFlow",
 //  "message":"booking started","trace_id":"4bf92f35…","span_id":"a3ce929d…",
-//  "trace_flags":"01","bookingId":"bk-1","sku":"ECO"}
+//  "trace_flags":"01","bookingId":"bk-1","sku":"seat-economy"}
 ```
 
 The `trace_id`/`span_id`/`trace_flags` fields come from the active span at the

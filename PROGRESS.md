@@ -380,3 +380,24 @@ deliverable per run.
   span tree, compensation path, reconciler divergence finding with span link); both
   linked in `README.md` above the Documentation table; generated via Playwright/Chromium
   (`scripts/screenshot.mjs`)
+
+## Known issues
+
+- ☐ No way to induce a reconciler divergence in the docker-compose stack. The
+  ledger has no failure injection and nothing reads `LEDGER_FAILURE_RATE`, so
+  how-to 3 in `docs/index.md` cannot be run (it now says so). A ledger failure
+  knob, or a scripted divergence, would make the reconciler demonstrable end to
+  end. A ledger failure knob alone would not be enough: a failed `ledger.commit`
+  makes the saga run `supplier.cancel` (`services/coordinator/src/saga/booking-saga.ts`),
+  so the cancel would also have to fail to leave the supplier confirmed
+  (found 2026-11-08).
+- ☐ The overview screenshot (`docs/screenshots/signalman-overview.png`, built by
+  `scripts/screenshot.mjs`) still shows the old quick-start request body with
+  `customerId`; regenerate it after updating the script (found 2026-11-08).
+- ☐ `spec.md`'s milestone table still shows M3 and M6 as not started and the rest
+  as in progress, while every milestone above is done (found 2026-10-06).
+- ☐ No project dossier PDF (`docs/dossier/`); `docs/architecture.md` covers the
+  design in markdown (found 2026-10-06).
+- ☐ The `reconciler ready` log line in `services/reconciler/src/main.ts` still
+  says the source gateway is wired "with the datastore/broker milestone"; it has
+  been the broker-backed gateway since M6 (found 2026-11-08).

@@ -16,7 +16,7 @@ Start a booking. Validates the request, drives the saga via the coordinator, rec
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `sku` | string | yes | Stock-keeping unit to book (e.g. `"ECO"`, `"BUS"`). |
+| `sku` | string | yes | Stock-keeping unit to book. The inventory service is seeded with `"seat-economy"`, `"seat-business"` and `"room-standard"`; any other SKU fails at `inventory.hold` with `insufficient_stock`. |
 | `qty` | integer > 0 | yes | Number of units to book. |
 | `amount` | integer > 0 | yes | Amount to take, in the currency's minor units (e.g. cents). |
 | `currency` | string | yes | ISO 4217 currency code (e.g. `"USD"`). |
@@ -27,7 +27,7 @@ Start a booking. Validates the request, drives the saga via the coordinator, rec
 ```bash
 curl -s -X POST http://localhost:3000/bookings \
   -H 'Content-Type: application/json' \
-  -d '{"sku":"ECO","qty":1,"amount":9900,"currency":"USD"}'
+  -d '{"sku":"seat-economy","qty":1,"amount":9900,"currency":"USD"}'
 ```
 
 **Response — `201 Created`** (both on a successful booking and on a saga business failure):
@@ -54,7 +54,7 @@ curl -s -X POST http://localhost:3000/bookings \
 {
   "bookingId": "01926a7e-f1d2-7000-b6e2-c8b7a9df1234",
   "status": "booked",
-  "request": { "sku": "ECO", "qty": 1, "amount": 9900, "currency": "USD" },
+  "request": { "sku": "seat-economy", "qty": 1, "amount": 9900, "currency": "USD" },
   "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
   "recordedAt": "2026-06-30T12:00:00.000Z",
   "holdId": "hold-abc",
@@ -71,7 +71,7 @@ curl -s -X POST http://localhost:3000/bookings \
 {
   "bookingId": "01926a7e-f1d2-7000-b6e2-c8b7a9df5678",
   "status": "failed",
-  "request": { "sku": "ECO", "qty": 1, "amount": 9900, "currency": "USD" },
+  "request": { "sku": "seat-economy", "qty": 1, "amount": 9900, "currency": "USD" },
   "traceId": "3a99f37ddc47b843b26b82c28a5e1987",
   "recordedAt": "2026-06-30T12:00:05.000Z",
   "failedStep": "supplier.confirm",

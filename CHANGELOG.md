@@ -24,6 +24,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-11-08)
+- **The README quick start works as written.** Its booking request sent
+  `skuId`, `quantity` and `customerId`, which the gateway rejects with
+  `400 sku must be a non-empty string`; it now sends
+  `{"sku":"seat-economy","qty":1,"amount":4200,"currency":"USD"}` and says which
+  SKUs the inventory service is seeded with. The compensation recipe ran
+  `docker-compose up -e SUPPLIER_FAILURE_RATE=1`, which Compose refuses
+  (`unknown shorthand flag: 'e'`), and a shell variable never reached the
+  container; `docker-compose.yml` now passes the six simulated-boundary
+  variables (`PSP_*`, `SUPPLIER_*`) through with the services' own defaults, and
+  the README, `docs/integration.md` and the compose header use
+  `SUPPLIER_FAILURE_RATE=1 docker-compose up`. The docs' example SKU `"ECO"` is
+  not seeded (bookings failed with `insufficient_stock`), so `docs/api.md`,
+  `docs/index.md` and `docs/integration.md` now use `"seat-economy"`, and
+  `docs/architecture.md`'s request shape matches the gateway.
+- **README brought up to date with the code.** The Status line was a sentence
+  fragment with old test counts (now 66 suites, 450 tests, 3 gated suites
+  skipped). The service sections said the Postgres stores were still to come,
+  though gateway, inventory, payments, supplier and ledger switch to them when
+  `POSTGRES_URL` is set; the library sections said the same of
+  `PostgresOutboxStore`, `PostgresInboxStore` and the JetStream adapter. The
+  reconciler run notes said its gateway was the in-memory reference; it is the
+  broker-backed gateway, which only sees events when every service shares NATS.
+  A new Known limits section lists clock-ordered reconciliation, the stores that
+  stay in memory, findings with no API, the need for NATS across processes, no
+  Kafka adapter, no switch for inducing a divergence, and the simulated partners.
+  `docs/index.md`'s divergence walkthrough is marked as not runnable yet, since
+  no service reads the `LEDGER_FAILURE_RATE` it sets.
+
 ### Fixed (2026-10-06)
 - **Reconciler no longer reports false divergences when events arrive out of
   order.** The outbox relay retries a failed publish after later rows have gone

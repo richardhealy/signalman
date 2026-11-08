@@ -14,9 +14,14 @@ version: "3.9"
 # To trigger a booking (and produce a trace):
 #   curl -s -X POST http://localhost:3000/bookings \
 #     -H "Content-Type: application/json" \
-#     -d '{"skuId":"SKU-1","quantity":1,"amount":100,"customerId":"c1"}' | jq .
+#     -d '{"sku":"seat-economy","qty":1,"amount":4200,"currency":"USD"}' | jq .
 #
 # Open the Grafana Explore view at http://localhost:3001 to browse traces.
+#
+# The simulated PSP and supplier partner read their latency and failure rates
+# from the shell, falling back to the services' own defaults. For example, to
+# force the compensation path:
+#   SUPPLIER_FAILURE_RATE=1 docker-compose up
 # ────────────────────────────────────────────────────────────────────────────
 
 x-otel-env: &otel-env
@@ -131,6 +136,9 @@ services:
       <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: payments
       PAYMENTS_GRPC_URL: "0.0.0.0:50052"
+      PSP_LATENCY_MS: ${PSP_LATENCY_MS:-150}
+      PSP_DECLINE_RATE: ${PSP_DECLINE_RATE:-0.1}
+      PSP_FAILURE_RATE: ${PSP_FAILURE_RATE:-0.05}
     ports:
       - "50052:50052"
     depends_on:
@@ -148,6 +156,9 @@ services:
       <<: [*otel-env, *broker-env, *pg-env]
       SERVICE_NAME: supplier
       SUPPLIER_GRPC_URL: "0.0.0.0:50053"
+      SUPPLIER_LATENCY_MS: ${SUPPLIER_LATENCY_MS:-250}
+      SUPPLIER_REJECT_RATE: ${SUPPLIER_REJECT_RATE:-0.1}
+      SUPPLIER_FAILURE_RATE: ${SUPPLIER_FAILURE_RATE:-0.1}
     ports:
       - "50053:50053"
     depends_on:
