@@ -29,6 +29,7 @@ import {
   type UnitOfWork,
 } from '@signalman/outbox';
 import { Pool } from 'pg';
+import { DEMO_STOCK } from './demo-stock';
 import { PostgresHoldRepository } from './pg-hold-repository';
 import { InMemoryHoldRepository, type HoldRepository } from './hold-repository';
 import { InventoryController } from './inventory.controller';
@@ -42,17 +43,6 @@ export const OUTBOX_STORE = Symbol('OUTBOX_STORE');
 
 /** DI token for the {@link BrokerFromEnvResult} the relay publishes onto. */
 export const MESSAGE_BROKER = Symbol('MESSAGE_BROKER');
-
-/**
- * Demo availability catalogue. Real deployments seed this from the inventory
- * datastore; a fixed catalogue keeps the service self-contained in in-memory
- * mode (when `POSTGRES_URL` is not set).
- */
-const DEMO_STOCK: Record<string, number> = {
-  'seat-economy': 100,
-  'seat-business': 20,
-  'room-standard': 50,
-};
 
 /** Returns the transaction runner to inject into {@link InventoryService}. */
 function makeTransact(
