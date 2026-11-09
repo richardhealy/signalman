@@ -24,6 +24,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-11-09)
+- **The overview screenshot shows a request the gateway accepts.** It still
+  showed `{"customerId":"c1","skuId":"sku-1","amount":100}`, which the gateway
+  answers with `400 sku must be a non-empty string`, a made-up response with
+  `"status": "confirmed"` (the gateway returns `booked` or `failed`) and test
+  counts from June. `scripts/screenshot.mjs` now shows the README quick-start
+  request and a shortened response from a real local run, runs the Jest suite
+  first and puts its real counts in the image (stopping if a test fails), keeps
+  the `\` line continuations in the curl command, uses `docker-compose up` like
+  the README, and uses Playwright's own Chromium unless
+  `PLAYWRIGHT_CHROMIUM_PATH` is set (the old default was a Linux-only path).
+  `docs/screenshots/signalman-overview.png` is regenerated; the trace-anatomy
+  image is unchanged.
+- **New test: documented requests match the running stack.**
+  `services/gateway/src/bookings/documented-requests.spec.ts` reads the README,
+  `docs/*.md`, `docker-compose.yml` and the screenshot script, runs every
+  documented `POST /bookings` body through the gateway's `parseBookingRequest`,
+  checks that every `curl`/`grpcurl` body names a seeded SKU, and checks that
+  the overview shows the README quick start. On main's files it fails 4 of 26
+  cases. The inventory seed moves to `services/inventory/src/holds/demo-stock.ts`
+  so the test can import it, and `docs/integration.md`'s Inventory `Hold`
+  example books `seat-economy` instead of the unseeded `SKU-A` (which was
+  refused with `insufficient_stock`).
+
 ### Fixed (2026-11-08)
 - **The README quick start works as written.** Its booking request sent
   `skuId`, `quantity` and `customerId`, which the gateway rejects with

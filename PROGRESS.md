@@ -391,9 +391,13 @@ deliverable per run.
   makes the saga run `supplier.cancel` (`services/coordinator/src/saga/booking-saga.ts`),
   so the cancel would also have to fail to leave the supplier confirmed
   (found 2026-11-08).
-- ☐ The overview screenshot (`docs/screenshots/signalman-overview.png`, built by
-  `scripts/screenshot.mjs`) still shows the old quick-start request body with
-  `customerId`; regenerate it after updating the script (found 2026-11-08).
+- ☑ The overview screenshot (`docs/screenshots/signalman-overview.png`, built by
+  `scripts/screenshot.mjs`) still showed the old quick-start request body with
+  `customerId` (found 2026-11-08). Fixed 2026-11-09: it shows the README quick
+  start and a real response, the script takes its test counts from a Jest run,
+  and `services/gateway/src/bookings/documented-requests.spec.ts` checks every
+  documented booking request against the gateway validator and the inventory
+  seed (which also caught `SKU-A` in `docs/integration.md`).
 - ☐ `spec.md`'s milestone table still shows M3 and M6 as not started and the rest
   as in progress, while every milestone above is done (found 2026-10-06).
 - ☐ No project dossier PDF (`docs/dossier/`); `docs/architecture.md` covers the

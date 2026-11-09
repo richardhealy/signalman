@@ -22,6 +22,10 @@ back to the originating trace.
   <img src="docs/screenshots/signalman-trace-anatomy.png" alt="signalman trace anatomy — happy path, compensation, reconciler divergence" width="900">
 </p>
 
+Both images are drawn by `node scripts/screenshot.mjs` (Playwright). It runs the
+test suite first and puts the real counts in the overview; the overview's
+booking request is the quick start below, and a test checks that it stays so.
+
 ## Documentation
 
 | Document | What it covers |
@@ -34,7 +38,7 @@ back to the originating trace.
 ## Status
 
 **v1.0.0, specification complete.** Lint, typecheck, build and the test suite
-are green: 66 suites and 450 tests, of which 3 suites (17 tests) need a running
+are green: 67 suites and 477 tests, of which 3 suites (17 tests) need a running
 NATS or Postgres and are skipped by default. See [Known limits](#known-limits)
 for what the system does not do yet.
 

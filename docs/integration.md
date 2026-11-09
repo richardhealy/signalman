@@ -427,10 +427,10 @@ A failed booking (for example, insufficient stock):
 ### Inventory — Hold / Release
 
 ```bash
-# Hold 2 units of SKU-A for booking bk-2
+# Hold 2 units of seat-economy for booking bk-2
 grpcurl -plaintext \
   -import-path proto -proto inventory.proto \
-  -d '{"bookingId":"bk-2","sku":"SKU-A","qty":2}' \
+  -d '{"bookingId":"bk-2","sku":"seat-economy","qty":2}' \
   localhost:50051 signalman.inventory.v1.Inventory/Hold
 
 # Release the hold for booking bk-2

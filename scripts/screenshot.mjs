@@ -1,8 +1,17 @@
 /**
  * Generates docs/screenshots/*.png via Playwright/Chromium.
  * Run: node scripts/screenshot.mjs
+ *
+ * Runs the Jest suite first and puts its real counts in the overview, so the
+ * image never claims more tests than the suite has (it stops if a test fails).
+ * Uses Playwright's own Chromium unless PLAYWRIGHT_CHROMIUM_PATH is set.
+ *
+ * The overview's quick-start request must match the README quick start;
+ * services/gateway/src/bookings/documented-requests.spec.ts checks that. The
+ * response shown is from a real local run (9 November 2026), shortened.
  */
 import { chromium } from 'playwright';
+import { execFileSync } from 'child_process';
 import { mkdir } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -10,11 +19,44 @@ import { dirname, join } from 'path';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'docs', 'screenshots');
 
+/** Pass/skip counts from a full Jest run; throws if any test fails. */
+function testCounts() {
+  let output;
+  try {
+    output = execFileSync(
+      process.execPath,
+      [join(ROOT, 'node_modules', 'jest', 'bin', 'jest.js'), '--json', '--silent'],
+      {
+        cwd: ROOT,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+  } catch {
+    throw new Error(
+      'the test suite failed (run npm test); fix it before regenerating the screenshots',
+    );
+  }
+  const run = JSON.parse(output);
+  return {
+    suitesPassed: run.numPassedTestSuites,
+    suitesSkipped: run.numPendingTestSuites,
+    testsPassed: run.numPassedTests,
+    testsSkipped: run.numPendingTests,
+  };
+}
+
+const counts = testCounts();
+console.log(
+  `jest: ${counts.suitesPassed} suites and ${counts.testsPassed} tests passed, ` +
+    `${counts.suitesSkipped} suites (${counts.testsSkipped} tests) skipped`,
+);
+
 await mkdir(OUT, { recursive: true });
 
 const browser = await chromium.launch({
-  executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH ||
-    '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined,
   args: ['--no-sandbox', '--disable-setuid-sandbox'],
 });
 const page = await browser.newPage();
@@ -122,20 +164,23 @@ const OVERVIEW_HTML = /* html */ `<!DOCTYPE html>
 
     <div class="section">
       <div class="section-title">Test Suite</div>
-      <div class="row"><span class="pass">✓</span>&nbsp;<span class="desc"><span class="pass">62 suites passed</span> &nbsp;<span class="subtle">·</span>&nbsp; <span class="pass">420 tests passed</span> &nbsp;<span class="subtle">·</span>&nbsp; <span class="skip">3 suites skipped</span> <span class="comment">(require live NATS / Postgres)</span></span></div>
+      <div class="row"><span class="pass">✓</span>&nbsp;<span class="desc"><span class="pass">${counts.suitesPassed} suites passed</span> &nbsp;<span class="subtle">·</span>&nbsp; <span class="pass">${counts.testsPassed} tests passed</span> &nbsp;<span class="subtle">·</span>&nbsp; <span class="skip">${counts.suitesSkipped} suites skipped</span> <span class="comment">(require live NATS / Postgres)</span></span></div>
     </div>
 
     <div class="section">
       <div class="section-title">Quick Start</div>
-      <div class="row"><span class="cmd">$ docker compose up</span></div>
+      <div class="row"><span class="cmd">$ docker-compose up</span></div>
       <div class="row" style="margin-top:6px">
         <span class="desc"><span class="url">localhost:3000</span> &nbsp;gateway &nbsp;<span class="subtle">·</span>&nbsp; <span class="url">localhost:3001</span> &nbsp;Grafana (Tempo traces + RED dashboards)</span>
       </div>
       <div class="row" style="margin-top:10px">
-        <span class="cmd">$ curl -sX POST localhost:3000/bookings \<br>&nbsp;&nbsp;&nbsp;&nbsp;-H 'Content-Type: application/json' \<br>&nbsp;&nbsp;&nbsp;&nbsp;-d '{"customerId":"c1","skuId":"sku-1","amount":100}'</span>
+        <span class="cmd">$ curl -sX POST localhost:3000/bookings \\<br>&nbsp;&nbsp;&nbsp;&nbsp;-H 'Content-Type: application/json' \\<br>&nbsp;&nbsp;&nbsp;&nbsp;-d '{"sku":"seat-economy","qty":1,"amount":4200,"currency":"USD"}'</span>
       </div>
       <div class="row" style="margin-top:4px">
-        <span class="desc">{ "bookingId": "bk-7f3a2c91…", "status": "<span class="pass">confirmed</span>", "traceId": "4bf92f35…" }</span>
+        <span class="desc">{"bookingId":"de85c488-…","status":"<span class="pass">booked</span>","request":{…},"traceId":"b8de3567…",…}</span>
+      </div>
+      <div class="row">
+        <span class="comment"># the simulated PSP and partner fail some calls by default: those come back "status":"failed"</span>
       </div>
     </div>
   </div>
